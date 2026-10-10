@@ -213,6 +213,26 @@ describe('shared runs over the wire', () => {
     expect(late.session?.localId).toBe(2);
   });
 
+  it('shrugs off malformed input from a guest', async () => {
+    const { host, guests, pump, wire } = await room(1);
+    const hs = startRun(host);
+    pump();
+    const end = wire.guestEnds[0]!;
+    for (const junk of [{ t: 'in', i: 'nope' }, { t: 'in', i: [[1, 2]] }, { t: 'in', i: [[5, 1, 0, 'x', 0, 0]] }, { t: 'in', i: [[9, NaN, 0, 0, 0, 0]] }, { t: 'nonsense' }, null, 42]) end.send(junk);
+    pump();
+    expect(() => hs.tick(STEP, null)).not.toThrow();
+    expect(hs.sim.players[1]!.alive).toBe(true);
+    // and real input still works afterwards
+    const walk = scripted(() => ({ forward: 1 }));
+    const before = { ...hs.sim.players[1]!.pos };
+    for (let f = 0; f < 30; f++) {
+      guests[0]!.session!.tick(STEP, walk);
+      pump();
+      hs.tick(STEP, null);
+    }
+    expect(Math.hypot(hs.sim.players[1]!.pos.x - before.x, hs.sim.players[1]!.pos.y - before.y)).toBeGreaterThan(0.2);
+  });
+
   it('turns away a different version of the game', async () => {
     const { wire, host, pump } = await room(0);
     const link = await wire.join(host.code);

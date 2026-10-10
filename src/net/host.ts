@@ -59,7 +59,10 @@ export class HostSession implements Session {
     const s = this.seats.find((x) => x.seat === seat);
     if (!s || s.gone) return;
     if (msg.t === 'in') {
+      // two seconds of steps at most in one message; anything malformed is ignored
+      if (!Array.isArray(msg.i) || msg.i.length > 120) return;
       for (const n of msg.i) {
+        if (!Array.isArray(n) || n.length !== 6 || !n.every((v) => typeof v === 'number' && Number.isFinite(v))) continue;
         const inp = unpackInput(n);
         if (inp.seq > (s.queue.length ? s.queue[s.queue.length - 1]!.seq : s.ack)) s.queue.push(inp);
       }
