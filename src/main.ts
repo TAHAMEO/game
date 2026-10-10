@@ -191,6 +191,7 @@ function pauseScreen(): void {
   screens.querySelector('[data-resume]')!.addEventListener('click', resume);
   screens.querySelector('[data-quit]')!.addEventListener('click', () => {
     sim.player.die('You stopped.');
+    resume(); // let the loop run so the death plays out and the end screen appears
   });
 }
 
