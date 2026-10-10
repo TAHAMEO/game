@@ -22,6 +22,7 @@ npm run dev          # http://localhost:5173 — headphones recommended
 npm test             # 63 system tests, one suite per brief section
 npm run campaign     # balance report: a scripted player lives 12 lives against one save
 npm run build        # static build in dist/
+npm run build:single # one self-contained file, dist/the-quiet.html — double-click to play
 npm run smoke        # boots the built game in headless Chromium (needs Playwright; see the script)
 ```
 

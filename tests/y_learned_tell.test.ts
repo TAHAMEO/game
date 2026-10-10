@@ -75,6 +75,7 @@ describe('Y. Faked tells', () => {
     sim.director.shouldFake = (k) => k === 'turn';
     sim.director.update = () => {};
     placePlayer(sim, 12, 18, Math.PI); // facing away down the hall, out of its sight
+    sim.player.flashlight.on = false; // (a lit torch would give you away)
     placeEntity(sim, 20, 18, Math.PI);
     sim.entity.lkp = { x: 12.5, y: 18.5 };
     sim.entity.startLeave(true, 'test');

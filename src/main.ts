@@ -107,6 +107,7 @@ function startRun(): void {
   (window as unknown as { __quiet: unknown }).__quiet = { sim, renderer, designer };
   hud.notice(`You are ${sim.player.name}.`, 4);
   hud.notice('The power is out. Find three fuses. Restore the breaker. Call for help.', 7);
+  hud.notice('Your torch (F) is the brightest thing in the building.', 9);
 }
 
 // ========================================================================= screens
@@ -138,7 +139,8 @@ function titleScreen(): void {
       <label>volume <input type="range" min="0" max="1" step="0.05" value="${settings.volume}" data-opt="vol"/></label>
       <label>layers <select data-opt="preset">${(['full', 'mvp', 'core'] as PresetName[]).map((p) => `<option ${p === settings.preset ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
     </div>
-    <p class="fine">No meters. No clock. No safe room. Headphones.</p>`);
+    <p class="fine">No meters. No clock. No safe room. Headphones.</p>
+    <p class="fine touch-note">This one needs a keyboard and a mouse or trackpad.</p>`);
   bindOptions();
   screens.querySelector('[data-go]')!.addEventListener('click', () => startRun());
 }

@@ -54,7 +54,8 @@ export class Player {
   hideBase = 0;
   transition: { spot: HidingSpot; t: number; dur: number; entering: boolean } | null = null;
   readonly breath = { holding: false, held: 0, next: 2, recover: 0 };
-  readonly flashlight = { on: false, battery: 1, faultUntil: 0 };
+  /** You start with the torch lit: the brightest thing in the building, and the first habit it will tax [S]. */
+  readonly flashlight = { on: true, battery: 1, faultUntil: 0 };
   readonly inv = { fuses: 0, keys: new Set<string>(), batteries: 0, bottles: 1 };
   /** Scent mark [V]. */
   markedUntil = 0;

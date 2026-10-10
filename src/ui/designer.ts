@@ -125,8 +125,19 @@ export class DesignerPanel {
       this.hooks.setTier(v === 'auto' ? null : Number(v));
     });
     this.toggles.querySelector('button[data-act="run"]')!.addEventListener('click', () => this.hooks.newRun());
-    this.toggles.querySelector('button[data-act="reset"]')!.addEventListener('click', () => {
-      if (confirm('Erase everything the Entity has learned about you?')) this.hooks.resetMemory();
+    const reset = this.toggles.querySelector<HTMLButtonElement>('button[data-act="reset"]')!;
+    let armedUntil = 0;
+    reset.addEventListener('click', () => {
+      // Two clicks, in the page itself: browser confirm() dialogs are not available everywhere.
+      if (performance.now() < armedUntil) {
+        this.hooks.resetMemory();
+        return;
+      }
+      armedUntil = performance.now() + 4000;
+      reset.textContent = 'Click again to erase everything it learned';
+      setTimeout(() => {
+        reset.textContent = 'Erase Entity memory';
+      }, 4000);
     });
   }
 
