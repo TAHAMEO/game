@@ -46,7 +46,6 @@ await page.click('[data-go]');
 await page.keyboard.down('KeyW');
 await page.waitForTimeout(1200);
 await page.keyboard.up('KeyW');
-await page.keyboard.press('KeyF');
 await page.keyboard.down('ArrowLeft');
 await page.waitForTimeout(600);
 await page.keyboard.up('ArrowLeft');

@@ -56,6 +56,9 @@ export class Renderer {
   private readonly spillLut = new Float32Array(256);
   private readonly handprint: Uint8Array;
   private breathHaze = 0;
+  /** Per-column / per-row squared view angles for the torch cone (reused every frame). */
+  private readonly colAngle2: Float32Array;
+  private readonly rowAngle2: Float32Array;
 
   constructor(canvas: HTMLCanvasElement, W = 400, H = 225) {
     this.W = W;
@@ -66,6 +69,8 @@ export class Renderer {
     this.img = this.ctx.createImageData(W, H);
     this.buf = new Uint32Array(this.img.data.buffer);
     this.zbuf = new Float32Array(W);
+    this.colAngle2 = new Float32Array(W);
+    this.rowAngle2 = new Float32Array(H);
     const t = buildTextures();
     for (const [name, tex] of Object.entries(t.walls)) {
       this.wallIdx.set(name, this.wallTex.length);
@@ -183,13 +188,13 @@ export class Renderer {
     }
     if (pl.hidden && pl.hidden.kind !== 'bed') torch *= 0.25; // the beam is mostly inside the locker
 
-    const colAngle2 = new Float32Array(W);
+    const colAngle2 = this.colAngle2;
     for (let x = 0; x < W; x++) {
       const camX = (2 * x) / W - 1;
       const a = Math.atan(camX * tanHalf);
       colAngle2[x] = a * a;
     }
-    const rowAngle2 = new Float32Array(H);
+    const rowAngle2 = this.rowAngle2;
     for (let y = 0; y < H; y++) {
       const a = Math.atan((y + 0.5 - horizon) / hScale);
       rowAngle2[y] = a * a;
