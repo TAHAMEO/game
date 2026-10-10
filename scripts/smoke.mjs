@@ -27,7 +27,8 @@ try {
 }
 
 mkdirSync(out, { recursive: true });
-const browser = await chromium.launch();
+// WebGL2 in a headless browser without a GPU: SwiftShader (slow, but complete).
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -40,8 +41,10 @@ await page.addInitScript(() => {
   };
 });
 
-await page.goto(`${url}?mute&seed=7`, { waitUntil: 'networkidle' });
-await page.screenshot({ path: `${out}/1-title.png` });
+await page.goto(`${url}?mute&seed=7&q=low&nointro`);
+// the title appears once every texture has been painted on the GPU
+await page.waitForSelector('[data-go]', { timeout: 300000 });
+await page.screenshot({ path: `${out}/1-title.png`, timeout: 120000 });
 await page.click('[data-go]');
 await page.keyboard.down('KeyW');
 await page.waitForTimeout(1200);
@@ -49,14 +52,14 @@ await page.keyboard.up('KeyW');
 await page.keyboard.down('ArrowLeft');
 await page.waitForTimeout(600);
 await page.keyboard.up('ArrowLeft');
-await page.screenshot({ path: `${out}/2-play.png` });
+await page.screenshot({ path: `${out}/2-play.png`, timeout: 120000 });
 await page.keyboard.press('F1');
 await page.waitForTimeout(500);
-await page.screenshot({ path: `${out}/3-directors-view.png` });
+await page.screenshot({ path: `${out}/3-directors-view.png`, timeout: 120000 });
 
 const state = await page.evaluate(() => {
   const s = window.__quiet?.sim;
-  return s && { time: +s.time.toFixed(2), phase: s.phase, entity: s.entity.stateKind, zone: s.playerZone };
+  return s && { time: +s.time.toFixed(2), phase: s.phase, entity: s.entity.stateKind, zone: s.playerZone, hd: !!window.__quiet.view?.hd };
 });
 const fps = await page.evaluate(
   () =>
@@ -71,6 +74,7 @@ await browser.close();
 
 console.log(JSON.stringify({ state, fps, screenshots: out }));
 if (!state || state.time <= 0) errors.push('simulation did not advance');
+if (state && !state.hd) errors.push('fell back to the raycaster (no WebGL2?)');
 if (errors.length) {
   console.error(errors.join('\n'));
   process.exit(1);
