@@ -1,6 +1,7 @@
 import type { Entity, EntityState, Tell, TellKind } from '../entity';
 import { cellAt, cellCenter, Tile } from '../level';
 import { clamp01, dist, lerp, type Vec2 } from '../math';
+import { distanceField } from '../path';
 import type { Plan } from '../plans';
 import type { Sim } from '../sim';
 import type { DoorState, HidingSpot, Item, Noise, Note, Prop, ThermalMark } from '../types';
@@ -217,6 +218,21 @@ export class Director {
     return decide({ kind: 'roam', cell: this.roamTarget(), reason: `roaming (drawn toward you ${Math.round(this.roamBias() * 100)}%)` });
   }
 
+  private reach: Float32Array | null = null;
+  private reachVersion = -1;
+
+  /** Can the Entity actually walk to this cell? (Locked doors wall parts of the map off.) */
+  reachable(cell: number): boolean {
+    const sim = this.sim;
+    if (cell < 0) return false;
+    if (!this.reach || this.reachVersion !== sim.world.lockVersion) {
+      const src = sim.level.markers.nest[0] ?? sim.entity.cell;
+      this.reach = distanceField(sim.level, [src], sim.world.entityPassable);
+      this.reachVersion = sim.world.lockVersion;
+    }
+    return Number.isFinite(this.reach[cell]!);
+  }
+
   roamBias(): number {
     if (this.sim.time < this.stalkUntil) return 1;
     return clamp01(0.2 + 0.7 * this.floor + 0.35 * this.stress.value);
@@ -232,7 +248,7 @@ export class Director {
     for (let i = 0; i < 16; i++) {
       const r = sim.rng.pick(level.regions);
       const c = sim.rng.pick(r.cells);
-      if (level.tiles[c] !== Tile.Floor) continue;
+      if (level.tiles[c] !== Tile.Floor || !this.reachable(c)) continue;
       const p = cellCenter(level, c);
       // Short legs: it re-decides often, which is what makes it feel like it is thinking.
       if (dist(p, from) > 24 && i < 12) continue;
@@ -253,7 +269,7 @@ export class Director {
     for (let i = 0; i < 14; i++) {
       const r = sim.rng.pick(level.regions);
       const c = sim.rng.pick(r.cells);
-      if (level.tiles[c] !== Tile.Floor) continue;
+      if (level.tiles[c] !== Tile.Floor || !this.reachable(c)) continue;
       const p = cellCenter(level, c);
       const d = dist(p, sim.player.pos);
       if (d > bestD && dist(p, entity.pos) < 26) {
@@ -273,7 +289,7 @@ export class Director {
       const a = sim.rng.range(0, Math.PI * 2);
       const r = sim.rng.range(0, radius);
       const c = cellAt(level, { x: center.x + Math.cos(a) * r, y: center.y + Math.sin(a) * r });
-      if (c < 0 || level.tiles[c] !== Tile.Floor) continue;
+      if (c < 0 || level.tiles[c] !== Tile.Floor || !this.reachable(c)) continue;
       const p = cellCenter(level, c);
       let score = sim.rng.range(0, 1);
       for (const s of sim.world.spots) if (dist(cellCenter(level, s.access), p) < 2.5) score += 0.4;

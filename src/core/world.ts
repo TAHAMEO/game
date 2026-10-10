@@ -44,6 +44,8 @@ export class World {
   /** Zones that a false note sends you to [U]. */
   readonly falseLeadZones = new Set<number>();
   fusesRequired = 3;
+  /** Bumped whenever a lock changes, so reachability caches know to refresh. */
+  lockVersion = 0;
   private nextId = 1;
 
   constructor(readonly level: Level, rng: Rng, setup: WorldSetup) {

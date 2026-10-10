@@ -473,6 +473,7 @@ export class Player {
     if (door.locked) {
       if (door.lock === 'maintenance' && this.inv.keys.has('maintenance')) {
         door.locked = false;
+        sim.world.lockVersion++;
         sim.emitNoise('door', pos, 18, 'player');
         sim.notice('The key turns.');
       } else {

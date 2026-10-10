@@ -454,7 +454,8 @@ export class Entity {
       const n = s.noise;
       if (ambushing) {
         const st = this.state as { watch?: Vec2; radius?: number };
-        const near = st.watch && st.radius ? dist(s.pos, st.watch) <= st.radius : dist(s.pos, this.pos) < 6;
+        // A feint listens for *anything* you do; an ambush only for its killing ground.
+        const near = k === 'feint' || (st.watch && st.radius ? dist(s.pos, st.watch) <= st.radius : dist(s.pos, this.pos) < 6);
         if (near || s.margin > 22) {
           if (k === 'feint') {
             sim.director.onFeintResolved(true);
@@ -899,6 +900,10 @@ export class Entity {
       return;
     }
     const r = this.goTo(s.dest, 'roam', dt);
+    if (r === 'blocked') {
+      s.dest = sim.director.leaveTarget(this);
+      return;
+    }
     if (s.fake && dist(this.pos, s.from) >= 3) {
       // [Y] the feint: stop just out of sight and listen backwards.
       this.setState({ kind: 'feint', until: sim.time + sim.rng.range(5, 7.5), origin: s.from }, 'stopped just past the corner — listening behind it');
