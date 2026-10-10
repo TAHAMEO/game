@@ -135,6 +135,7 @@ export class GameRenderer {
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
     this.post?.setSize(w, h, pr);
+    this.torch?.setViewHeight(h * pr);
   }
 
   // ===================================================================== events

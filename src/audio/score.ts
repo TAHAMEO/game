@@ -117,7 +117,8 @@ export class Score {
     this.chase += ((s.chase ? 1 : 0) - this.chase) * k(s.chase ? 0.4 : 3);
     const ducked = now < this.duckUntil ? 0.15 : 1;
     const alive = s.alive ? 1 : 0.25;
-    this.droneGain.gain.setTargetAtTime((0.05 + 0.1 * s.floor + 0.12 * this.tension) * ducked * alive * (1 - s.vision * 0.7), now, 1.2);
+    // calm: under the building's own sound; it climbs with the debt and with fear
+    this.droneGain.gain.setTargetAtTime((0.032 + 0.1 * s.floor + 0.13 * this.tension) * ducked * alive * (1 - s.vision * 0.7), now, 1.2);
     this.dissonance.gain.setTargetAtTime(Math.max(0, s.floor - 0.35) * 0.4 + this.tension * 0.15, now, 3);
     this.strings.gain.setTargetAtTime(Math.max(0, this.tension - 0.25) * 0.032 * ducked * alive, now, 1.5);
     this.chaseGain.gain.setTargetAtTime(this.chase * 0.9 * ducked, now, 0.3);

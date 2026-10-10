@@ -231,9 +231,10 @@ function entityHead(): THREE.BufferGeometry {
 }
 
 export function buildEntity(kit: MaterialKit): EntityModel {
-  const skinOpts = { color: 0xc6c4bf, sheen: 0.3, sheenColor: 0x3a3030, clearcoat: 0.4, emissive: 0x141413, emissiveIntensity: 1, fill: 0.6, direct: 0.9, normalScale: 1.3 };
-  const skin = kit.surface('skin', skinOpts) as THREE.MeshStandardMaterial;
-  const face = kit.surface('skin', { ...skinOpts, vertexColors: true }) as THREE.MeshStandardMaterial;
+  // ashen, mottled, wet: barely there in the dark (a faint emissive keeps a shape in pitch black)
+  const skinOpts = { color: 0xd6d2c8, sheen: 0.25, sheenColor: 0x2a2424, clearcoat: 0.55, emissive: 0x0b0a0a, emissiveIntensity: 1, fill: 0.6, direct: 0.9, normalScale: 1.4 };
+  const skin = kit.surface('corpse', skinOpts) as THREE.MeshStandardMaterial;
+  const face = kit.surface('corpse', { ...skinOpts, vertexColors: true }) as THREE.MeshStandardMaterial;
   const dark = kit.plain({ color: 0x080404, roughness: 0.35 }, 'entity-dark');
   const tooth = kit.plain({ color: 0xb8ae96, roughness: 0.4 }, 'entity-tooth');
   const nail = kit.plain({ color: 0x3a3226, roughness: 0.3 }, 'entity-nail');

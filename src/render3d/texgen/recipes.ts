@@ -208,23 +208,25 @@ export const RECIPES: Record<string, Recipe> = {
   float dy = min(f.y, 1.0 - f.y);
   float mortar = 1.0 - smoothstep(0.07, 0.11, min(dx * 0.42, dy));
   vec3 rnd = hash32(id + 5.3);
-  vec3 b = mix(lin(vec3(0.34, 0.14, 0.09)), lin(vec3(0.48, 0.24, 0.16)), rnd.x) * (0.75 + 0.3 * rnd.y);
+  vec3 b = mix(lin(vec3(0.36, 0.15, 0.10)), lin(vec3(0.46, 0.22, 0.15)), rnd.x) * (0.86 + 0.16 * rnd.y);
   float speck = fbm(uv, vec2(96.0), 3, 2.0);
   b *= 0.85 + 0.25 * speck;
   col = mix(b, lin(vec3(0.33, 0.32, 0.30)) * (0.7 + 0.3 * speck), mortar);
   h = mix(0.62 + 0.04 * speck - 0.05 * rnd.z, 0.38, mortar);
-  float wet = fbm(vec2(uv.x, uv.y * 0.2), vec2(16.0, 3.0), 5, 4.0);
-  float streaks = smoothstep(0.5, 0.7, wet);
-  col *= 1.0 - 0.35 * streaks;
+  // rain runs down from the sills in broad, soft stains (not shiny ribbons)
+  float wet = fbm(vec2(uv.x, uv.y * 0.2), vec2(8.0, 2.0), 5, 4.0);
+  float streaks = smoothstep(0.45, 0.75, wet) * (0.4 + 0.6 * v);
+  col *= 1.0 - 0.3 * streaks;
   float moss = smoothstep(0.5, 0.7, fbm(uv, vec2(10.0), 5, 6.0)) * (1.0 - smoothstep(0.02, 0.22, v));
   col = mix(col, lin(vec3(0.12, 0.16, 0.06)), moss * 0.85);
-  float salt = smoothstep(0.72, 0.8, fbm(uv, vec2(6.0), 5, 8.0)) * mortar;
-  col = mix(col, lin(vec3(0.7, 0.7, 0.66)), salt * 0.6);
-  rough = mix(0.7, 0.92, mortar) - 0.45 * streaks + 0.1 * moss;
+  // efflorescence: a faint bloom of salt, soft across bricks and mortar alike
+  float salt = smoothstep(0.6, 0.85, fbm(uv, vec2(5.0), 5, 8.0)) * (0.35 + 0.65 * mortar);
+  col = mix(col, lin(vec3(0.62, 0.6, 0.56)), salt * 0.22);
+  rough = mix(0.74, 0.93, mortar) - 0.18 * streaks + 0.1 * moss;
   metal = 0.0;
   ao = mix(1.0, 0.6, mortar);
   `,
-    2.4,
+    1.7,
     true,
   ),
 
@@ -600,6 +602,36 @@ export const RECIPES: Record<string, Recipe> = {
   ao = 1.0 - 0.2 * wrinkles;
   `,
     1.8,
+  ),
+
+  /** The Entity: what is left when something wears a body for forty years. */
+  corpse: R(
+    `
+  vec3 base = lin(vec3(0.60, 0.58, 0.53));
+  float m1 = fbm(uv, vec2(4.0), 6, 1.0);
+  float m2 = fbm(uv, vec2(14.0), 5, 2.0);
+  col = base * (0.7 + 0.38 * m1);
+  col = mix(col, col * lin(vec3(0.86, 0.92, 0.84)), smoothstep(0.5, 0.8, m2) * 0.5);
+  // livor: a purple-grey pooling under the skin
+  float livor = smoothstep(0.45, 0.8, fbm(uv, vec2(3.0), 6, 9.0));
+  col = mix(col, lin(vec3(0.36, 0.30, 0.37)), livor * 0.5);
+  // veins, dark and branching
+  float veins = ridged(uv, vec2(6.0), 6, 3.0);
+  float vein = smoothstep(0.62, 0.9, veins);
+  col = mix(col, lin(vec3(0.19, 0.21, 0.30)), vein * 0.65);
+  // grime, and blood that is not its own
+  float grime = smoothstep(0.55, 0.82, fbm(uv, vec2(9.0), 5, 4.0));
+  col = mix(col, lin(vec3(0.15, 0.12, 0.09)), grime * 0.55);
+  float blood = smoothstep(0.7, 0.83, fbm(uv, vec2(5.0), 6, 11.0));
+  col = mix(col, lin(vec3(0.21, 0.035, 0.03)), blood * 0.75);
+  float pores = smoothstep(0.62, 0.8, fbm(uv, vec2(240.0), 2, 6.0));
+  float wrinkles = smoothstep(0.68, 0.9, ridged(vec2(uv.x, uv.y * 0.3), vec2(36.0, 10.0), 3, 7.0));
+  h = 0.5 + 0.06 * vein - 0.035 * pores - 0.06 * wrinkles + 0.04 * m1 - 0.03 * blood;
+  rough = 0.42 + 0.2 * pores + 0.25 * grime - 0.22 * blood;
+  metal = 0.0;
+  ao = 1.0 - 0.25 * wrinkles - 0.2 * grime;
+  `,
+    2.0,
   ),
 
   rust: R(

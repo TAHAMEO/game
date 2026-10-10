@@ -73,6 +73,31 @@ const HorrorShader = {
 
 export type HorrorUniforms = typeof HorrorShader.uniforms;
 
+/**
+ * Ambient occlusion from solid things only. The stock pass leaves out points and lines but
+ * keeps every mesh, so the torch's invisible volumetric cone, the rain and the window glass
+ * occluded the walls they touch (a dark ring where the beam met a wall).
+ */
+class SolidGTAOPass extends GTAOPass {
+  constructor(scene: THREE.Scene, camera: THREE.Camera, w: number, h: number) {
+    super(scene, camera, w, h);
+    const self = this as unknown as { _overrideVisibility: () => void; _visibilityCache: THREE.Object3D[]; scene: THREE.Scene };
+    self._overrideVisibility = () => {
+      const cache = self._visibilityCache;
+      self.scene.traverse((o) => {
+        if (!o.visible) return;
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        const see = m && !Array.isArray(m) && (m.transparent || (m as THREE.Material & { isShaderMaterial?: boolean }).isShaderMaterial);
+        const thin = (o as THREE.Points).isPoints || (o as THREE.Line).isLine || (o as THREE.Sprite).isSprite;
+        if (thin || see || o.userData.noAO) {
+          o.visible = false;
+          cache.push(o);
+        }
+      });
+    };
+  }
+}
+
 /** Composer: scene → AO → bloom → tone map → horror grade → anti-aliasing. */
 export class Post {
   readonly composer: EffectComposer;
@@ -94,7 +119,7 @@ export class Post {
     this.render = new RenderPass(scene, camera);
     this.composer.addPass(this.render);
     if (quality.ao) {
-      this.ao = new GTAOPass(scene, camera, size.x, size.y);
+      this.ao = new SolidGTAOPass(scene, camera, size.x, size.y);
       this.ao.output = GTAOPass.OUTPUT.Default;
       this.ao.blendIntensity = 0.9;
       this.ao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.4, thickness: 1.2, scale: 1.0, samples: 12 });

@@ -81,6 +81,7 @@ uniform float uTime;
 uniform float uScale;
 attribute float aSeed;
 varying float vA;
+varying float vSoft;
 void main() {
   // the dust box follows the torch: wrap every mote into an 8 x 8 cell column around it
   vec3 p = position;
@@ -92,20 +93,28 @@ void main() {
   float dl = length(d);
   float c = dot(d / max(dl, 1e-3), uDir);
   float inBeam = smoothstep(uCos - 0.02, uCos + 0.05, c);
-  vA = uIntensity * inBeam / (1.0 + dl * dl * 0.25) * (0.5 + 0.5 * sin(uTime * 2.0 + aSeed * 40.0));
+  // motes only catch the light for a moment, as they turn
+  float glint = pow(0.5 + 0.5 * sin(uTime * 1.3 + aSeed * 40.0), 3.0);
+  vA = uIntensity * inBeam / (1.0 + dl * dl * 0.6) * glint;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
-  gl_PointSize = uScale * (0.6 + aSeed) / max(0.2, -mv.z);
+  // a mote is a millimetre or two across: its size on screen follows the lens, not a constant
+  float px = (0.0012 + 0.0016 * aSeed) * projectionMatrix[1][1] * uScale * 0.5 / max(0.15, -mv.z);
+  gl_PointSize = max(1.0, px * 2.5);
+  // sub-pixel motes fade rather than shimmer
+  vA *= clamp(px * 2.5, 0.0, 1.0);
+  vSoft = 1.0;
   gl_Position = projectionMatrix * mv;
 }
 `;
 
 const DUST_FRAG = /* glsl */ `
 varying float vA;
+varying float vSoft;
 void main() {
   vec2 q = gl_PointCoord - 0.5;
-  float r = dot(q, q);
-  if (r > 0.25) discard;
-  gl_FragColor = vec4(vec3(1.0, 0.95, 0.85) * vA * (1.0 - r * 4.0), 1.0);
+  float r = dot(q, q) * 4.0;
+  if (r > 1.0) discard;
+  gl_FragColor = vec4(vec3(1.0, 0.95, 0.85) * vA * exp(-r * 3.0) * vSoft, 1.0);
 }
 `;
 
@@ -187,7 +196,7 @@ export class Torch {
           uCos: { value: Math.cos(0.42) },
           uIntensity: { value: 0 },
           uTime: { value: 0 },
-          uScale: { value: 18 },
+          uScale: { value: 1080 },
         },
         transparent: true,
         depthWrite: false,
@@ -230,9 +239,14 @@ export class Torch {
       const u = this.dustMat.uniforms;
       (u.uOrigin!.value as THREE.Vector3).copy(origin);
       (u.uDir!.value as THREE.Vector3).copy(this.dir);
-      u.uIntensity!.value = 1.6 * power;
+      u.uIntensity!.value = 0.55 * power;
       u.uTime!.value = t;
     }
+  }
+
+  /** Drawing-buffer height in pixels (mote sizes follow it). */
+  setViewHeight(px: number): void {
+    if (this.dustMat) this.dustMat.uniforms.uScale!.value = px;
   }
 
   setVolumetric(on: boolean): void {

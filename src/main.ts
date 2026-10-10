@@ -361,7 +361,7 @@ function beginRun(s: Session): void {
   audio.silenceVoices();
   input.clear();
   input.crouchToggled = false;
-  (window as unknown as { __quiet: unknown }).__quiet = { sim, session: s, view, designer, hud };
+  (window as unknown as { __quiet: unknown }).__quiet = { sim, session: s, view, designer, hud, audio, input, screen: () => screen };
   if (params.has('autostart') || params.has('nointro')) {
     enterBuilding();
     return;

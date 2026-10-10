@@ -103,6 +103,8 @@ export class AudioEngine {
   private tension = 0;
   private nextHeart = 0;
   private wasHolding = false;
+  private analyser: AnalyserNode | null = null;
+  private meterBuf: Float32Array<ArrayBuffer> | null = null;
   tts = true;
   volumes: Volumes = { master: 0.9, music: 0.75, sfx: 1, voice: 1 };
 
@@ -129,6 +131,9 @@ export class AudioEngine {
     limiter.attack.value = 0.003;
     limiter.release.value = 0.25;
     this.master.connect(limiter).connect(ctx.destination);
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    limiter.connect(this.analyser);
     this.muffle = ctx.createBiquadFilter();
     this.muffle.type = 'lowpass';
     this.muffle.frequency.value = 20000;
@@ -328,7 +333,7 @@ export class AudioEngine {
       const v = Math.min(3, e.volume * base * 1.1);
       if (e.kind === 'step') {
         const w = Math.max(0.25, Math.min(1, e.volume * 1.4));
-        this.atHead(0.05, -1.0, 0.18, 0.75 * w + 0.15, 0.18, (o) => footstep(o, surface, w));
+        this.atHead(0.05, -1.0, 0.18, (0.75 * w + 0.15) * 0.72, 0.18, (o) => footstep(o, surface, w));
       } else {
         const fwd = e.kind === 'breath' || e.kind === 'gasp' || e.kind === 'exhale' ? 0.15 : 0.45;
         this.atHead(0, -0.1, fwd, v, 0.22, (o) => play(o, e.kind, surface));
@@ -579,6 +584,23 @@ export class AudioEngine {
     if (kind === 'hover') this.direct(this.music, 0.15, (o) => tone(o, { f0: 880, f1: 860, env: { peak: 0.05, attack: 0.002, dur: 0.06 } }));
     else if (kind === 'select') this.direct(this.music, 0.3, (o) => play(o, 'click', 'tile'));
     else this.direct(this.music, 0.6, (o) => swell(o, 1.8, 0.8), 0.5);
+  }
+
+  /** What is coming out right now, in dBFS (RMS over the last ~40 ms). For tests and a level meter. */
+  meter(): number {
+    const a = this.analyser;
+    if (!a) return -Infinity;
+    if (!this.meterBuf || this.meterBuf.length !== a.fftSize) this.meterBuf = new Float32Array(a.fftSize);
+    a.getFloatTimeDomainData(this.meterBuf);
+    let sum = 0;
+    for (const v of this.meterBuf) sum += v * v;
+    const rms = Math.sqrt(sum / this.meterBuf.length);
+    return rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+  }
+
+  /** The audio clock is running (not suspended by the browser). */
+  get running(): boolean {
+    return this.ctx?.state === 'running';
   }
 
   suspend(): void {
