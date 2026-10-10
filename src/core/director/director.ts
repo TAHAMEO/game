@@ -425,9 +425,6 @@ export class Director {
     this.adapt.onTell(tell, audibleLevel);
   }
 
-  onListenEnded(fake: boolean): void {
-    void fake;
-  }
 
   onFeintResolved(sprung: boolean): void {
     this.sim.log('Y', sprung ? 'the feint worked — you moved when it turned away' : 'you waited out the feint');
@@ -511,9 +508,6 @@ export class Director {
 
   // ================================================================== player hooks
 
-  observePlayerStep(dt: number): void {
-    void dt;
-  }
 
   /** Every real noise passes through here (for tell reads and stress). */
   onNoise(n: Noise): void {

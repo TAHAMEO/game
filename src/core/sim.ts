@@ -165,10 +165,6 @@ export class Sim {
     this.events.push({ type: 'sound', kind, pos: { ...pos }, volume: clamp01(lv / 45), dir, phantom: true, source: 'phantom' });
   }
 
-  noiseLevelAt(n: Noise, cell: number): number {
-    if (cell === this.entity.cell) return n.entityLevel ?? 0;
-    return 0;
-  }
 
   // =================================================================== world helpers
 
@@ -255,4 +251,3 @@ export class Sim {
   }
 }
 
-export { World };

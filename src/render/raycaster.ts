@@ -55,7 +55,6 @@ export class Renderer {
   private readonly coneLut = new Float32Array(256);
   private readonly spillLut = new Float32Array(256);
   private readonly handprint: Uint8Array;
-  private grain = 0;
   private breathHaze = 0;
 
   constructor(canvas: HTMLCanvasElement, W = 400, H = 225) {
@@ -702,7 +701,6 @@ export class Renderer {
     const hurt = sim.time - pl.lastHurt;
     const red = hurt < 0.8 ? 1 - hurt / 0.8 : 0;
     // vignette + grain (constant: these are style, never a meter)
-    this.grain = (this.grain + 1) & 1023;
     const cx = W / 2;
     const cy = H / 2;
     const maxD = cx * cx + cy * cy;

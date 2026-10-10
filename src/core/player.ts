@@ -96,7 +96,6 @@ export class Player {
 
   update(dt: number, input: InputState): void {
     if (!this.alive) return;
-    const sim = this.sim;
     this.turnRate = Math.abs(input.turn) / Math.max(dt, 1e-4);
 
     if (input.flashlightPressed) this.toggleFlashlight();
@@ -133,7 +132,6 @@ export class Player {
       if (input.interactPressed && this.focus) this.interact(this.focus);
     }
     if (input.throwPressed) this.throwBottle();
-    sim.director.observePlayerStep(dt);
   }
 
   // ------------------------------------------------------------- movement

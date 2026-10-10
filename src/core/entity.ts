@@ -598,7 +598,6 @@ export class Entity {
       }
       case 'listen':
         if (sim.time >= s.until) {
-          sim.director.onListenEnded(s.fake);
           const resume = s.resume;
           if (resume.kind === 'listen' || resume.kind === 'check' || resume.kind === 'lunge' || resume.kind === 'kill') this.idleNext('heard nothing more');
           else {
