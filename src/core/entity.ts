@@ -2,7 +2,7 @@ import { TUNING } from './config';
 import { cellAt, cellCenter, Tile } from './level';
 import { angleDiff, angleTo, clamp01, dist, lerp, smoothstep, turnToward, wrapAngle, type Vec2 } from './math';
 import { findPath } from './path';
-import type { MoveMode, Plan } from './plans';
+import type { MoveMode, Plan, PlanStep } from './plans';
 import type { Sim } from './sim';
 import type { FogPuff, HidingSpot, Item, Noise, ThermalMark } from './types';
 import { World } from './world';
@@ -31,7 +31,6 @@ export type EntityState =
   | { kind: 'check'; spot: number; phase: 'approach' | 'inhale' | 'open' | 'linger'; t: number; fake: boolean; certain: boolean; reason: string; queue: number[] }
   | { kind: 'leave'; phase: 'turn' | 'walk'; t: number; dest: number; fake: boolean; from: Vec2 }
   | { kind: 'feint'; until: number; origin: Vec2 }
-  | { kind: 'ambush'; cell: number; facing: number; until: number; watch: Vec2; radius: number; reason: string }
   | { kind: 'plan'; plan: Plan; step: number; t: number; arrived: boolean }
   | { kind: 'feed'; until: number }
   | { kind: 'retreat'; dest: number; then: 'rest' | 'feed' }
@@ -68,9 +67,10 @@ const HEAR_BASE: Record<EntityState['kind'], number> = {
   lunge: 30,
   kill: 40,
   feint: 6,
-  ambush: 8,
   mimic: 9,
 };
+/** A plan waiting in ambush listens harder than one on the move. */
+const HEAR_AMBUSH = 8;
 
 export class Entity {
   pos: Vec2;
@@ -128,7 +128,7 @@ export class Entity {
 
   hearingThreshold(): number {
     const d = this.sim.director;
-    return HEAR_BASE[this.state.kind] - 7 * d.floor + d.hearingShift();
+    return (this.planIsCommitted() ? HEAR_AMBUSH : HEAR_BASE[this.state.kind]) - 7 * d.floor + d.hearingShift();
   }
 
   // ===================================================================== update
@@ -260,7 +260,7 @@ export class Entity {
   fov(): number {
     const k = this.state.kind;
     if (k === 'feint') return Math.PI * 2;
-    if (k === 'hunt' || k === 'chase' || k === 'investigate' || k === 'check' || k === 'ambush' || k === 'mimic') return E.fovHunt;
+    if (k === 'hunt' || k === 'chase' || k === 'investigate' || k === 'check' || k === 'mimic' || this.planIsCommitted()) return E.fovHunt;
     if (k === 'rest' || k === 'feed') return E.fovRoam * 0.6;
     return E.fovRoam;
   }
@@ -352,6 +352,13 @@ export class Entity {
     return k === 'roam' || k === 'rest' || k === 'retreat' || k === 'leave' || k === 'feed' || (k === 'plan' && !this.planIsCommitted());
   }
 
+  /** The ambush step a plan is on, with the killing ground it watches. */
+  private trapStep(): Extract<PlanStep, { op: 'ambush' }> | null {
+    if (this.state.kind !== 'plan') return null;
+    const step = this.state.plan.steps[this.state.step];
+    return step?.op === 'ambush' ? step : null;
+  }
+
   private planIsCommitted(): boolean {
     if (this.state.kind !== 'plan') return false;
     const step = this.state.plan.steps[this.state.step];
@@ -365,7 +372,7 @@ export class Entity {
     if (k === 'lunge' || k === 'kill') return;
     const pl = sim.player;
     const floor = sim.director.floor;
-    const ambushing = k === 'ambush' || k === 'mimic' || k === 'feint' || this.planIsCommitted();
+    const ambushing = k === 'mimic' || k === 'feint' || this.planIsCommitted();
 
     // ---- the torch [S: flashlight tax]
     if (pc.beamOnMe && k !== 'chase') {
@@ -483,9 +490,11 @@ export class Entity {
     if (s) {
       const n = s.noise;
       if (ambushing) {
-        const st = this.state as { watch?: Vec2; radius?: number };
-        // A feint listens for *anything* you do; an ambush only for its killing ground.
-        const near = k === 'feint' || (st.watch && st.radius ? dist(s.pos, st.watch) <= st.radius : dist(s.pos, this.pos) < 6);
+        // A feint listens for *anything* you do; an ambush for its killing ground, and for
+        // anything right on top of it.
+        const trap = this.trapStep();
+        const near =
+          k === 'feint' || (trap ? dist(s.pos, trap.watch) <= trap.radius || dist(s.pos, this.pos) < 2.5 : dist(s.pos, this.pos) < 6);
         if (near || s.margin > 22) {
           if (k === 'feint') {
             sim.director.onFeintResolved(true);
@@ -640,15 +649,6 @@ export class Entity {
           this.idleNext('the feint went unanswered');
         }
         break;
-      case 'ambush': {
-        if (this.cell !== s.cell) {
-          if (this.goTo(s.cell, 'stalk', dt) === 'blocked') this.idleNext('ambush unreachable');
-          break;
-        }
-        this.angle = turnToward(this.angle, s.facing, dt * 3);
-        if (sim.time >= s.until) this.idleNext('the ambush went cold');
-        break;
-      }
       case 'plan':
         this.tickPlan(s, dt);
         break;

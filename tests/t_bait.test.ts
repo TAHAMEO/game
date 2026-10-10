@@ -122,6 +122,31 @@ describe('T. The bait economy', () => {
     expect(sim.world.lighting.sample(amb.watch)).toBeGreaterThan(0.05);
   });
 
+  it('an ambush springs on its killing ground, not on noises elsewhere', () => {
+    function waiting(): Sim {
+      const sim = makeSim({ seed: 4, tier: 0, features: { survivors: false } });
+      controlled(sim, cell(sim, 28, 18));
+      placePlayer(sim, 31, 24);
+      sim.player.update = () => {};
+      sim.entity.pos = { x: 20.5, y: 18.5 };
+      const ground = { x: 28.5, y: 18.5 };
+      run(sim, { id: 77, kind: 'herd', section: 'T', steps: [{ op: 'ambush', cell: cell(sim, 20, 18), facing: 0, duration: 60, watch: ground, radius: 3 }], reason: 'test', created: 0 });
+      step(sim, 1);
+      expect(sim.entity.stateKind).toBe('plan');
+      return sim;
+    }
+    // A footstep on the watched ground, eight cells in front of it: the trap springs.
+    const a = waiting();
+    a.emitNoise('step', { x: 28.5, y: 18.5 }, 40, 'player');
+    step(a, 0.1);
+    expect(a.entity.stateKind).toBe('investigate');
+    // A footstep five cells behind it, far from the ground: it keeps waiting.
+    const b = waiting();
+    b.emitNoise('step', { x: 15.5, y: 18.5 }, 30, 'player');
+    step(b, 0.1);
+    expect(b.entity.stateKind).toBe('plan');
+  });
+
   it('logs every plan it tries, for the designer', () => {
     const sim = makeSim({ seed: 25, tier: 3 });
     placePlayer(sim, 31, 25);
