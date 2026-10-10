@@ -46,7 +46,8 @@ const store = new BrowserStore();
 const settings: Settings = loadSettings(store);
 const persist = () => saveSettings(store, settings);
 const params = new URLSearchParams(location.search);
-if (params.has('q')) settings.quality = params.get('q') as QualityName;
+/** `?q=` picks a preset for this visit only (it is not saved). */
+const urlQuality = (['low', 'medium', 'high', 'ultra'] as const).find((q) => q === params.get('q')) ?? null;
 
 let canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const screens = document.querySelector<HTMLElement>('#screens')!;
@@ -75,8 +76,6 @@ let overAt = -1;
 let lockWanted = false;
 let wall = 0;
 let nextFlash = 6;
-/** Where "Back" goes from the options/case file screens. */
-let menuReturn: () => void = () => titleScreen();
 
 // ========================================================================= setup
 
@@ -115,7 +114,7 @@ function makePreviewSim(): Sim {
 async function makeView(onProgress: (k: number) => void): Promise<View> {
   if (!params.has('retro')) {
     try {
-      const gr = new GameRenderer(canvas, settings.quality);
+      const gr = new GameRenderer(canvas, urlQuality ?? settings.quality);
       await gr.init(preview.level, onProgress);
       gr.brightness = settings.brightness;
       return { hd: gr, handle: (e, s, v, t) => gr.handle(e, s, v, t), render: (s, f) => gr.render(s, f), resize: () => gr.resize() };
@@ -171,7 +170,6 @@ function titleScreen(): void {
   endSession();
   closeNetwork();
   screen = 'title';
-  menuReturn = titleScreen;
   const found = new Persistence(store).data.story.found.length;
   show(
     `
@@ -203,7 +201,6 @@ function titleScreen(): void {
 function optionsScreen(back: () => void, runOptions: boolean): void {
   const prev = screen;
   screen = prev === 'paused' || prev === 'journal' ? prev : 'menu';
-  menuReturn = back;
   const sel = <T extends string>(name: string, value: T, opts: readonly [T, string][]) =>
     `<select data-opt="${name}">${opts.map(([v, l]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   const range = (name: keyof Settings, min: number, max: number, step: number) =>
@@ -269,7 +266,7 @@ function optionsScreen(back: () => void, runOptions: boolean): void {
         Object.assign(features, PRESETS[settings.preset]);
         designer.bind(session?.sim ?? preview);
       }
-      if (key === 'quality') void changeQuality();
+      if (key === 'quality') void changeQuality(() => optionsScreen(back, runOptions));
       applySettings();
       persist();
     });
@@ -277,15 +274,24 @@ function optionsScreen(back: () => void, runOptions: boolean): void {
   on('[data-back]', () => back());
 }
 
-async function changeQuality(): Promise<void> {
+let rebuilding = false;
+/** Rebuild every texture and effect at the chosen preset, then go back to `after`. */
+async function changeQuality(after: () => void): Promise<void> {
   const gr = view.hd;
-  if (!gr) return;
-  const q = settings.quality === 'auto' ? undefined : settings.quality;
-  const back = menuReturn;
-  const progress = loadingScreen('Repainting the building…');
-  await gr.setQuality(q ?? guessQuality(), preview.level, progress);
-  gr.brightness = settings.brightness;
-  back();
+  if (!gr || rebuilding) return;
+  rebuilding = true;
+  try {
+    // keep going until the preset on screen is the one chosen (it may change while we build)
+    for (;;) {
+      const want: QualityName = settings.quality === 'auto' ? guessQuality() : settings.quality;
+      if (gr.quality.name === want && gr.ready) break;
+      await gr.setQuality(want, preview.level, loadingScreen('Repainting the building…'));
+    }
+    gr.brightness = settings.brightness;
+  } finally {
+    rebuilding = false;
+  }
+  after();
 }
 
 function caseFileScreen(back: () => void): void {
