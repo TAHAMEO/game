@@ -1,0 +1,367 @@
+:root {
+  --bg: #050505;
+  --ink: #d8d4c8;
+  --dim: #8a867c;
+  --accent: #b8a68a;
+  --red: #b33a2e;
+  --panel: rgba(8, 9, 10, 0.92);
+  --line: #2a2a2a;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  overflow: hidden;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+#view {
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: min(100vh, calc(100vw * 9 / 16));
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  cursor: crosshair;
+}
+
+/* ------------------------------------------------------------------ HUD */
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  font: 14px/1 ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color: rgba(216, 212, 200, 0.75);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid rgba(216, 212, 200, 0.4);
+  border-radius: 3px;
+  font: 12px ui-monospace, monospace;
+  margin-right: 4px;
+}
+
+.hud-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(12% - 12px);
+  width: 160px;
+  height: 2px;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.08);
+  transition: opacity 0.2s;
+}
+
+.hud-bar i {
+  display: block;
+  height: 100%;
+  background: rgba(216, 212, 200, 0.6);
+}
+
+.hud-subs {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  width: min(720px, 90vw);
+  text-align: center;
+}
+
+.sub {
+  margin: 4px 0;
+  font-size: 17px;
+  text-shadow: 0 0 6px #000, 0 0 2px #000;
+}
+
+.sub b {
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.sub.radio {
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  color: #b9d4c0;
+}
+
+.sub.radio b {
+  color: #6fbf8f;
+}
+
+.hud-notices {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  width: min(640px, 88vw);
+  text-align: center;
+  font-style: italic;
+  color: var(--dim);
+  text-shadow: 0 0 6px #000;
+}
+
+.notice {
+  margin: 3px 0;
+}
+
+.hud-inv {
+  position: absolute;
+  left: 3%;
+  bottom: 4%;
+  font: 13px ui-monospace, monospace;
+  color: rgba(216, 212, 200, 0.55);
+  text-shadow: 0 0 4px #000;
+}
+
+.hud-inv .status {
+  color: rgba(200, 120, 110, 0.75);
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+.hud-note {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-1.2deg);
+  width: min(420px, 86vw);
+  padding: 22px 26px;
+  background: #d9d1bd;
+  color: #2b2620;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.hud-note h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.hud-note small {
+  display: block;
+  margin-top: 14px;
+  color: #6b6255;
+}
+
+/* ------------------------------------------------------------------ screens */
+
+#screens {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+}
+
+.screen {
+  pointer-events: auto;
+  max-width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 28px 32px;
+  background: rgba(0, 0, 0, 0.78);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.screen h1 {
+  margin: 0 0 8px;
+  font-size: clamp(36px, 8vw, 64px);
+  letter-spacing: 0.3em;
+  font-weight: 400;
+}
+
+.screen h1.red {
+  color: var(--red);
+  letter-spacing: 0.08em;
+}
+
+.screen h2 {
+  font-weight: 400;
+  letter-spacing: 0.2em;
+}
+
+.lede {
+  font-size: 18px;
+}
+
+.memory {
+  color: var(--dim);
+  font-style: italic;
+}
+
+.fine {
+  color: #5a5750;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: #111;
+  border: 1px solid #444;
+  padding: 6px 14px;
+  cursor: pointer;
+  margin: 4px;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.go {
+  font-size: 20px;
+  padding: 10px 30px;
+  letter-spacing: 0.15em;
+  margin: 14px 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  font-size: 13px;
+  color: var(--dim);
+  margin: 10px 0;
+}
+
+.journal {
+  text-align: left;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+}
+
+.journal h3 {
+  color: var(--accent);
+  font-weight: 400;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ------------------------------------------------------------------ designer */
+
+#designer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  overflow: auto;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  font: 12px/1.4 ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  padding: 8px 10px 20px;
+  z-index: 5;
+}
+
+#designer[hidden] {
+  display: none;
+}
+
+.dz-head span {
+  color: #666;
+}
+
+.dz-map {
+  width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid var(--line);
+  margin: 6px 0;
+}
+
+.dz-k {
+  margin-top: 6px;
+  font-weight: bold;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.dz-bar {
+  display: inline-block;
+  width: 70px;
+  height: 7px;
+  background: #222;
+  vertical-align: middle;
+}
+
+.dz-bar i {
+  display: block;
+  height: 100%;
+}
+
+.dz-log {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  color: #aaa;
+}
+
+.dz-log i {
+  color: #666;
+  font-style: normal;
+}
+
+.dz-toggles {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.dz-sec {
+  margin: 4px 0;
+}
+
+.dz-sec label {
+  display: inline-block;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+.dz-actions {
+  margin-top: 8px;
+}
+
+@media (max-width: 700px) {
+  .controls span:nth-child(n + 7) {
+    display: none;
+  }
+}
