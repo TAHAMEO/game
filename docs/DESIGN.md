@@ -13,7 +13,7 @@ was built. If the real Part 1 differs, these are the seams to reconcile.
 |---|---|---|
 | A | Entity senses | **Sight:** a cone of 115° (160° when alert), range 3.2 cells in darkness to 17 cells in light. Crouch ×0.6, standing still ×0.55, sprinting ×1.3. A lit torch lights you; the beam in its face is a beacon. **Hearing:** a threshold per state (rest 20 dB … listening 5 dB), lowered by the debt and by your stress. Sound loses 1.6 dB per cell and 14 more through a closed door. |
 | B | Body language | **Head-tilt** = listening. **Inhale** = about to commit (lunge, dash, open a hiding place). **Slow turn** = leaving. **Snap** = the trap sprang. |
-| G | States, nest | rest, roam, listen, investigate, hunt, chase, lunge, check, leave, feint, ambush, plan, feed, retreat, kill, mimic. It goes home to the nest to rest and to feed. |
+| G | States, nest | rest, roam, listen, investigate, hunt, chase, lunge, check, leave, feint, plan, feed, retreat, kill, mimic. Ambushes are plan steps that watch a killing ground. A head-tilt pauses a plan, it doesn't end it. It goes home to the nest to rest and to feed. |
 | I | Hold breath | 8.5 s capacity, less when panting or wounded. A gasp is 46 dB. Releasing late makes a louder exhale. |
 | J | Hiding, punishing pause | Lockers, morgue drawers, under beds (some beds have junk under them). After 30 s hidden (12 s late in the debt) the Director draws the Entity to your area and your spot's check score rises. |
 | K | Persistence, knowledge tiers | Permadeath: every life is a new character. Entity Knowledge XP (death +3, escape +3, survived encounter +0.5 up to 3 per life, each new fake or counter +1). Tiers start at 4 / 10 / 18 / 30 XP. |
@@ -74,7 +74,7 @@ Plans (`director/bait.ts`) are short physical step lists the Entity must walk an
   room. Then it camps outside the door for 75 s.
 - **Offered safety** (all tiers). It opens a locker a hand's width, or clears the junk from under a
   bed, within 4 cells of your route, then lurks 6–10 cells off. If you take it, it comes to check
-  4–9 s later.
+  4–9 s later. If it is busy then, it comes as soon as it is free.
 - **Darkness funnels** (tier 1+). It finds two routes to your objective. It breaks up to four lights
   that serve the first route but not the second, and only if the second is lit. Then it waits in the
   dark beside the lit one. The only lit room is rarely safe.
@@ -120,7 +120,7 @@ Built from the save (`nest.ts`, `persistence.ts`), deepest cells first, under a 
 - up to 8 **survivors** it took
 - the last 24 **trophies**: your torch, carried fuses, keys, bottles, scraps
 
-At tier 2+ your **previous body** is waiting. If you died in a locker or drawer, it is propped in that
+At tier 2+ your **previous body** (the life just before this one, unless that life got out) is waiting. If you died in a locker or drawer, it is propped in that
 spot half the time (you can't hide there any more). Otherwise it has been dragged to the nest. The
 badge has your old name on it. It is near-suicide to enter: the Entity rests and feeds there, and it
 has one way in.
@@ -129,7 +129,10 @@ has one way in.
 
 - Two survivors per run (names, colours and voices from `hospital.ts`).
 - They cough (more often when it is near).
-- They talk: attachment +1 per new line, a battery gift +2.
+- They talk: attachment +1 per new line, a battery gift +2. They ask for a battery once, and give a bottle
+  back.
+- When it kills one, it drags the body to the nest and feeds. While dragging, it ignores everything
+  except you, loud and close.
 - Sometimes they lean out and wave you over, exactly like a mimic would.
 - When it hunts them they call for help every 5 s. Being within 9 cells when it gives up counts as
   saving them (+3 attachment).
@@ -178,7 +181,7 @@ A tactic that has saved you 3 times, including at least 2 of your last 3 escapes
 | distraction | it ignores the glass and walks to where you threw from |
 | doors | it bashes through in 0.15 s instead of 0.6 s |
 | dark | it hears the torch click as if it were 12 dB louder |
-| route | it barricades a door on that corridor (you can't open it), or waits on it |
+| route | it barricades a door on that corridor, or waits on it. A barricade takes a route, never the only way to the fuse box, the radio, a gate, a fuse or the key, and never a doorway someone stands in. Holding E forces it in 3.5 s, rattling the whole time and ending in a door bash it hears. The Entity shoves its own barricade aside if it walks through. |
 
 **Moving goalposts.** Comfort accrues while stress is below 0.3, the Entity is active and you are
 progressing. After 45 s of it the Director shifts something: an immediate plan, 60 s of stalking you
