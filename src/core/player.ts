@@ -18,7 +18,7 @@ export type Focus =
   | { kind: 'survivor'; id: number }
   | { kind: 'prop'; prop: Prop };
 
-export type ChannelKind = 'breaker' | 'radio' | 'wash' | 'gate';
+export type ChannelKind = 'breaker' | 'radio' | 'wash' | 'gate' | 'force';
 
 interface Channel {
   kind: ChannelKind;
@@ -26,6 +26,7 @@ interface Channel {
   dur: number;
   tap?: Tap;
   gate?: Gate;
+  door?: DoorState;
   tick: number;
 }
 
@@ -390,6 +391,7 @@ export class Player {
     switch (f.kind) {
       case 'door':
         if (f.door.locked) return f.door.lock === 'maintenance' && this.inv.keys.has('maintenance') ? 'Unlock door' : 'Try door';
+        if (f.door.jammed) return 'Force door (loud)';
         return f.door.target > 0.5 ? 'Close door' : this.crouching ? 'Ease door open' : 'Open door';
       case 'spot': {
         const s = f.spot;
@@ -488,9 +490,11 @@ export class Player {
       }
     }
     if (door.jammed) {
+      // Barricaded [Y]. Never for good: hold to shove it, which costs time and noise.
       sim.emitNoise('rattle', pos, L.rattle, 'player');
       sim.notice('It gives an inch and stops. Something heavy is holding it.');
       sim.director.onJammedDoor(door);
+      this.channel = { kind: 'force', t: 0, dur: 3.5, door, tick: 0.5 };
       return;
     }
     const closing = door.target > 0.5;
@@ -554,6 +558,8 @@ export class Player {
         sim.emitNoise('radio', cellCenter(sim.level, sim.world.radio.access), L.radio, 'world');
       } else if (ch.kind === 'breaker') {
         sim.emitNoise('hum', cellCenter(sim.level, sim.world.fuseBox.access), 22, 'world');
+      } else if (ch.kind === 'force' && ch.door) {
+        sim.emitNoise('rattle', cellCenter(sim.level, ch.door.cell), L.rattle, 'player');
       }
     }
     if (ch.t < ch.dur) return;
@@ -576,6 +582,17 @@ export class Player {
       case 'gate':
         sim.objectives.escapeThrough(ch.gate!);
         break;
+      case 'force': {
+        const door = ch.door!;
+        if (!door.jammed) break;
+        door.jammed = false;
+        door.target = 1;
+        door.speed = 0.6;
+        sim.world.lockVersion++;
+        sim.emitNoise('doorBash', cellCenter(sim.level, door.cell), L.doorBash, 'player');
+        sim.notice('Whatever was holding it scrapes back. The door gives.');
+        break;
+      }
     }
   }
 

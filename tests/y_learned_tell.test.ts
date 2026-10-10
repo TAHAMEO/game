@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TUNING } from '../src/core/config';
 import type { EntityState, Tell } from '../src/core/entity';
-import { cellCenter } from '../src/core/level';
+import { cellCenter, Tile } from '../src/core/level';
 import { dist } from '../src/core/math';
 import { MemoryStore } from '../src/core/persistence';
 import type { Sim } from '../src/core/sim';
@@ -149,6 +149,60 @@ describe('Y. Strategy dismantling', () => {
     const door = sim.world.doors[step0.op === 'jam' ? step0.door : -1]!;
     expect(door.jammed).toBe(true);
     expect(sim.world.humanPassable(door.cell)).toBe(false);
+  });
+
+  it('never barricades the only way to something you need', () => {
+    // The Maintenance corridor's doors include the only way into the fuse-box room.
+    let jams = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const sim = makeSim({ seed, tier: 2, features: { survivors: false } });
+      placePlayer(sim, 31, 24); // Reception, before the maintenance key is found
+      const { level, world } = sim;
+      const fuseRoom = level.regions[level.regionOf[world.fuseBox.access]!]!;
+      const way = fuseRoom.links.find((l) => l.via >= 0)!;
+      const plan = sim.director.bait.buildRouteCounter(way.region);
+      const s0 = plan?.steps[0];
+      if (s0?.op !== 'jam') continue;
+      jams++;
+      expect(world.doors[s0.door]!.cell).not.toBe(way.via);
+    }
+    expect(jams).toBeGreaterThan(10);
+  });
+
+  it('does not barricade a door you are standing in', () => {
+    const sim = makeSim({ seed: 5, features: { survivors: false } });
+    const corridor = sim.level.regions.find((r) => r.kind === 'corridor' && r.links.some((l) => l.via >= 0 && !sim.world.doorAt.get(l.via)!.locked))!;
+    const plan = sim.director.bait.buildRouteCounter(corridor.id)!;
+    const s0 = plan.steps[0]!;
+    expect(s0.op).toBe('jam');
+    const door = sim.world.doors[s0.op === 'jam' ? s0.door : -1]!;
+    door.open = door.target = 1;
+    (sim.entity as unknown as { sense(): void }).sense = () => {};
+    sim.entity.startPlan(plan);
+    sim.player.pos = cellCenter(sim.level, door.cell);
+    const outcomes: string[] = [];
+    sim.director.onPlanFinished = (_p, outcome) => void outcomes.push(outcome);
+    step(sim, 60);
+    expect(door.jammed).toBe(false);
+    expect(outcomes).toContain('aborted');
+  });
+
+  it('a barricade costs you time and noise, but never holds for good', () => {
+    const sim = makeSim({ seed: 4 });
+    sedateEntity(sim);
+    const door = sim.world.doors.find((d) => !d.locked && d.sides.every((c) => sim.level.tiles[c] === Tile.Floor))!;
+    door.open = door.target = 0;
+    door.jammed = true;
+    const [a] = door.sides;
+    const from = cellCenter(sim.level, a!);
+    const to = cellCenter(sim.level, door.cell);
+    sim.player.pos = { ...from };
+    sim.player.angle = Math.atan2(to.y - from.y, to.x - from.x);
+    step(sim, 0.1, { interactPressed: true, interact: true });
+    const events = step(sim, 4, { interact: true });
+    expect(door.jammed).toBe(false);
+    expect(door.target).toBe(1);
+    expect(events.some((e) => e.type === 'sound' && e.kind === 'doorBash')).toBe(true);
   });
 
   it('remembers what it dismantled after you die', () => {

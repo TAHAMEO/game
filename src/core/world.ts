@@ -1,5 +1,6 @@
 import { Lighting } from './lighting';
-import { cellCenter, isStaticOpaque, losClear, Tile, type Level } from './level';
+import { cellAt, cellCenter, isStaticOpaque, losClear, Tile, type Level } from './level';
+import { distanceField } from './path';
 import type { Vec2 } from './math';
 import type { Rng } from './rng';
 import type {
@@ -260,6 +261,31 @@ export class World {
     }
     return false;
   };
+
+  /**
+   * Would barricading `doorCell` cut someone at `from` off from something the run needs:
+   * the fuse box, the radio, either gate, or a fuse or the key still lying about?
+   * Strategy dismantling [Y] may take a route away, never the way to the objective. Only
+   * needs reachable now count, and the maintenance door counts as open (its key exists).
+   */
+  wouldStrand(doorCell: number, from: number): boolean {
+    const reach = (barricade: number) =>
+      distanceField(this.level, [from], (c) => {
+        if (c === barricade) return false;
+        const t = this.level.tiles[c]!;
+        if (t === Tile.Floor) return true;
+        if (t !== Tile.Door) return false;
+        const d = this.doorAt.get(c)!;
+        return !d.jammed && (!d.locked || d.lock === 'maintenance');
+      });
+    const needs = [this.fuseBox.access, this.radio.access, ...this.gates.map((g) => g.access)];
+    for (const it of this.items) {
+      if (it.state === 'ground' && (it.kind === 'fuse' || it.kind === 'key')) needs.push(cellAt(this.level, it.pos));
+    }
+    const before = reach(-1);
+    const after = reach(doorCell);
+    return needs.some((c) => c >= 0 && Number.isFinite(before[c]!) && !Number.isFinite(after[c]!));
+  }
 
   isCold(cell: number): boolean {
     const z = this.level.zoneOf[cell]!;

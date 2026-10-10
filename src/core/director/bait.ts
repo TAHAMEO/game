@@ -357,7 +357,7 @@ export class BaitPlanner {
     for (const room of rooms.slice(0, 3)) {
       const doorCell = room.links.find((l) => l.via >= 0)!.via;
       const door = world.doorAt.get(doorCell);
-      if (!door || door.locked) continue;
+      if (!door || door.locked || door.jammed) continue;
       const dp = cellCenter(level, doorCell);
       let deep = room.center;
       let dd = -1;
@@ -482,7 +482,7 @@ export class BaitPlanner {
     const doors = region.links
       .filter((l) => l.via >= 0)
       .map((l) => world.doorAt.get(l.via)!)
-      .filter((d) => d && !d.locked && !d.jammed);
+      .filter((d) => d && !d.locked && !d.jammed && !world.wouldStrand(d.cell, sim.player.soundCell));
     if (doors.length) {
       const door = sim.rng.pick(doors);
       return this.plan('jam', 'Y', [{ op: 'jam', door: door.index }], `barricade a door on ${level.zones[region.zone]!.name}, your safe route`);

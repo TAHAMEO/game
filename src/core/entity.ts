@@ -1080,8 +1080,15 @@ export class Entity {
         const r = this.goTo(side, 'stalk', dt);
         if (r === 'blocked') return this.abortPlan(s.plan, 'cannot reach door');
         if (r !== 'arrived') return;
+        // Re-check on arrival: you may have moved since the plan was made.
+        const inDoorway = (p: Vec2) => cellAt(sim.level, p) === door.cell;
+        if (inDoorway(sim.player.pos) || sim.survivors.list.some((sv) => sv.alive && inDoorway(sv.pos))) {
+          return this.abortPlan(s.plan, 'someone is in the doorway');
+        }
+        if (world.wouldStrand(door.cell, sim.player.soundCell)) return this.abortPlan(s.plan, 'it would cut you off from the way out');
         door.target = 0;
         door.jammed = true;
+        world.lockVersion++;
         sim.emitNoise('drag', cellCenter(sim.level, door.cell), 24, 'entity');
         sim.log('Y', 'dismantling: barricaded a door on your safe route');
         advance();
@@ -1201,6 +1208,11 @@ export class Entity {
       const door = world.doorAt.get(next)!;
       if (door.open < 0.85) {
         if (door.target !== 1) {
+          if (door.jammed) {
+            // It shoves its own barricade aside on the way through.
+            door.jammed = false;
+            world.lockVersion++;
+          }
           door.target = 1;
           const counter = sim.director.counterActive('doors');
           // A closed door costs it time — until it learns that you rely on doors [Y].
