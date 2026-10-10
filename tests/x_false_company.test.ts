@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EntityState } from '../src/core/entity';
 import { cellCenter } from '../src/core/level';
 import { dist } from '../src/core/math';
-import { makeSim, placeEntity, sedateEntity, step } from './helpers';
+import { makeSim, placeEntity, placePlayer, sedateEntity, step } from './helpers';
 
 describe('X. False company', () => {
   it('there are others: survivors hide, talk, and grow on you', () => {
@@ -87,6 +87,44 @@ describe('X. False company', () => {
     const st = sim.entity.state as EntityState;
     expect(st.kind).toBe('lunge');
     expect(sim.entity.disguise).toBeNull();
+  });
+
+  it('drags a body home without stopping for its scream, then feeds', () => {
+    for (const seed of [1, 2, 3]) {
+      const sim = makeSim({ seed, tier: 0 });
+      const sv = sim.survivors.list.find((s) => s.spot)!;
+      placePlayer(sim, 31, 24); // far away, in Reception
+      sim.player.update = () => {}; // a silent statue
+      const acc = cellCenter(sim.level, sv.spot!.access);
+      placeEntity(sim, Math.floor(acc.x), Math.floor(acc.y));
+      sim.entity.beginCheck([sv.spot!.id], true, 'test: someone is in there');
+      const after = new Set<string>();
+      for (let i = 0; i < 120 * 60 && sim.entity.stateKind !== 'feed'; i++) {
+        step(sim, 1 / 60);
+        if (!sv.alive) after.add(sim.entity.stateKind);
+      }
+      expect(sv.alive).toBe(false);
+      expect([...after]).not.toContain('investigate');
+      expect(sim.entity.stateKind).toBe('feed');
+      expect(sim.entity.carryingBody).toBeNull();
+      expect(sim.level.regions[sim.level.regionOf[sim.entity.cell]!]!.kind).toBe('nest');
+      const body = sim.world.props.find((p) => p.kind === 'survivorBody' && p.label === sv.def.name);
+      expect(body).toBeDefined();
+      expect(dist(body!.pos, sim.entity.pos)).toBeLessThan(1);
+    }
+  });
+
+  it('a second kill does not lose the first body', () => {
+    const sim = makeSim({ seed: 2 });
+    sedateEntity(sim);
+    const [a, b] = sim.survivors.list;
+    const take = (id: number) => (sim.entity as unknown as { takeBody(id: number): void }).takeBody(id);
+    sim.survivors.kill(a!.id, 'test');
+    take(a!.id);
+    sim.survivors.kill(b!.id, 'test');
+    take(b!.id);
+    expect(sim.entity.carryingBody).toBe(b!.id);
+    expect(sim.world.props.some((p) => p.kind === 'survivorBody' && p.label === a!.def.name)).toBe(true);
   });
 
   it('ALREADY GONE: a survivor it kills is dragged home, and remembered', () => {

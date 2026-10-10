@@ -476,7 +476,10 @@ export class Entity {
     }
 
     // ---- hearing
-    const s = pc.sound;
+    // Dragging a body home [W], it tunes the building out, its victim's last scream included.
+    // Only you, loud and close, turn it around.
+    const carrying = this.carryingBody !== null;
+    const s = pc.sound && (!carrying || (pc.sound.noise.source === 'player' && pc.sound.margin >= 18)) ? pc.sound : null;
     if (s) {
       const n = s.noise;
       if (ambushing) {
@@ -566,6 +569,12 @@ export class Entity {
 
   startPlan(plan: Plan): void {
     this.setState({ kind: 'plan', plan, step: 0, t: 0, arrived: false }, `[${plan.section}] ${plan.reason}`);
+  }
+
+  /** Take a body to drag home [W]. One it was already carrying is dropped where it stands. */
+  private takeBody(id: number): void {
+    if (this.carryingBody !== null && this.carryingBody !== id) this.sim.survivors.depositBody(this.carryingBody, this.pos);
+    this.carryingBody = id;
   }
 
   retreat(then: 'rest' | 'feed', reason: string): void {
@@ -799,7 +808,7 @@ export class Entity {
         const sv = sim.survivors.list[s.survivor]!;
         if (sv.alive && !sv.spot && dist(this.pos, sv.pos) <= E.reach + 0.4) {
           sim.survivors.kill(sv.id, 'caught in the open');
-          this.carryingBody = sv.id;
+          this.takeBody(sv.id);
           this.retreat('feed', `drags ${sv.def.name} back to the nest`);
           return;
         }
@@ -888,7 +897,7 @@ export class Entity {
         if (spot.occupant?.kind === 'survivor') {
           const id = spot.occupant.id;
           sim.survivors.kill(id, `pulled from a ${spot.kind}`);
-          this.carryingBody = id;
+          this.takeBody(id);
           this.retreat('feed', `drags ${sim.survivors.list[id]!.def.name} back to the nest`);
           return;
         }
