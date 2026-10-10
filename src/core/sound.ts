@@ -55,11 +55,13 @@ export class SoundField {
         } else if (t !== Tile.Floor && t !== Tile.Bed) {
           continue;
         }
-        const nl = lv - cost;
+        // Compare in Float32 space: a value that only differs below Float32 precision is not
+        // an improvement (comparing the Float64 value re-queued cells endlessly).
+        const nl = Math.fround(lv - cost);
         if (nl <= minAudible || nl <= field[nc]!) continue;
         if (field[nc] === 0) this.touched.push(nc);
         field[nc] = nl;
-        heap.push(nc, -field[nc]!);
+        heap.push(nc, -nl);
       }
     }
   }
