@@ -1,6 +1,7 @@
 import { defaultConfig } from '../src/core/config';
 import { idleInput } from '../src/core/input';
-import { cellCenter } from '../src/core/level';
+import { cellCenter, Tile } from '../src/core/level';
+import type { ScareKind } from '../src/core/types';
 import { MemoryStore } from '../src/core/persistence';
 import { Sim } from '../src/core/sim';
 import { GameRenderer } from '../src/render3d/GameRenderer';
@@ -29,6 +30,13 @@ const place = (x: number, y: number, a: number, pitch = 0) => {
   sim.player.pos = { x: x + 0.5, y: y + 0.5 };
   sim.player.angle = a;
   sim.player.pitch = pitch;
+};
+/** Stage a scare and photograph it `after` seconds in. */
+const scare = (kind: ScareKind, pos: { x: number; y: number }, after: number) => {
+  sim.entity.pos = { x: 60.5, y: 40.5 };
+  frame(10);
+  gr.handle([{ type: 'scare', kind, intensity: 1, pos, phantom: false, to: 0 }], sim, 0, t);
+  frame(Math.max(1, Math.round(after * 60)));
 };
 const scenes = (p.get('scenes') ?? 'dark,entity,tilt,locker,power').split(',');
 for (const s of scenes) {
@@ -91,6 +99,47 @@ for (const s of scenes) {
       ent.pos = { x: 60.5, y: 40.5 };
       frame(20);
       break;
+    case 'scare-flicker':
+      place(20, 18, 0, 0.05);
+      scare('flicker', { x: 23.2, y: 18.5 }, 0.32);
+      break;
+    case 'scare-behind':
+      place(20, 18, 0, 0.08);
+      scare('behind', { x: 21.9, y: 18.5 }, 0.12);
+      break;
+    case 'scare-window': {
+      const L = sim.level;
+      let done = false;
+      for (let c = 0; c < L.w * L.h && !done; c++) {
+        if (L.tiles[c] !== Tile.Window) continue;
+        const x = c % L.w;
+        const y = Math.floor(c / L.w);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const a = (y + dy) * L.w + (x + dx);
+          const b = (y + 3 * dy) * L.w + (x + 3 * dx);
+          const z = L.zoneOf[a]!;
+          if (L.tiles[a] !== Tile.Floor || L.tiles[b] !== Tile.Floor || L.tiles[(y + 2 * dy) * L.w + (x + 2 * dx)] !== Tile.Floor || z < 0 || L.zones[z]!.exterior) continue;
+          place(x + 3 * dx, y + 3 * dy, Math.atan2(-dy, -dx), 0.05);
+          scare('window', { x: x + 0.5 + dx * 0.5, y: y + 0.5 + dy * 0.5 }, 0.25);
+          done = true;
+          break;
+        }
+      }
+      break;
+    }
+    case 'scare-locker': {
+      const spot = sim.world.spots.find((x) => x.kind === 'locker')!;
+      const acc = cellCenter(sim.level, spot.access);
+      sim.player.pos = { ...acc };
+      sim.player.hidden = spot;
+      spot.occupant = { kind: 'player', id: 0 };
+      sim.player.angle = Math.atan2(acc.y - cellCenter(sim.level, spot.cell).y, acc.x - cellCenter(sim.level, spot.cell).x);
+      sim.player.hideBase = sim.player.angle;
+      scare('locker', acc, 0.3);
+      sim.player.hidden = null;
+      spot.occupant = null;
+      break;
+    }
     case 'garden':
       place(6, 33, 3.14, 0.15);
       ent.pos = { x: 3.5, y: 37.5 };

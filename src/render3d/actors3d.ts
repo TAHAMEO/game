@@ -74,6 +74,8 @@ export class Actors3D {
   private readonly entity: EntityInstance;
   private readonly phantoms: EntityInstance[] = [];
   private readonly apparition: EntityInstance;
+  /** Whether the Entity casts a shadow (not when it is in your face: it would hide itself from your torch). */
+  private entityShadow = true;
   private apparitionUntil = -1;
   private apparitionPose: Pose = 'idle';
   private readonly survivors = new Map<number, HumanInstance>();
@@ -98,6 +100,8 @@ export class Actors3D {
     this.entity = mk();
     for (let i = 0; i < 3; i++) this.phantoms.push(mk());
     this.apparition = mk();
+    // what only you see casts no shadow (and a scare up close is never lost in its own)
+    for (const inst of [...this.phantoms, this.apparition]) inst.model.root.traverse((o) => (o.castShadow = false));
   }
 
   private bind(sim: Sim): void {
@@ -147,6 +151,16 @@ export class Actors3D {
     this.apparition.model.root.visible = false;
   }
 
+  /** Chest points of the Entity and any apparition on show (for the torch's bounce). */
+  *bodiesInView(out: THREE.Vector3): Generator<THREE.Vector3> {
+    for (const inst of [this.entity, this.apparition, ...this.phantoms]) {
+      const r = inst.model.root;
+      if (!r.visible) continue;
+      out.set(r.position.x, 1.05, r.position.z);
+      yield out;
+    }
+  }
+
   /** The Entity's head in world space (for the camera's death and scare framing). */
   entityHead(out: THREE.Vector3): THREE.Vector3 {
     return this.entity.model.rig.j('head').getWorldPosition(out);
@@ -166,6 +180,11 @@ export class Actors3D {
     }
     const ent = this.entity;
     ent.model.root.visible = !disguised && dCam > 0.12;
+    const shadow = dCam > 1.8;
+    if (shadow !== this.entityShadow) {
+      this.entityShadow = shadow;
+      ent.model.root.traverse((o) => (o.castShadow = shadow));
+    }
     if (ent.model.root.visible) {
       if (e.tell && e.tell.id !== ent.lastTell) {
         ent.lastTell = e.tell.id;

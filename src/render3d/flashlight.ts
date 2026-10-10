@@ -131,6 +131,8 @@ export interface TorchState {
  */
 export class Torch {
   readonly light: THREE.SpotLight;
+  /** Light the beam throws back off whatever it hits: near things fill the room around you. */
+  readonly bounce: THREE.PointLight | null;
   readonly target = new THREE.Object3D();
   readonly beam: THREE.Mesh;
   readonly dust: THREE.Points | null;
@@ -158,6 +160,11 @@ export class Torch {
     l.target = this.target;
     scene.add(l, this.target);
     this.light = l;
+    if (opts.local) {
+      this.bounce = new THREE.PointLight(0xffe4c4, 0, 5, 2);
+      this.bounce.castShadow = false;
+      scene.add(this.bounce);
+    } else this.bounce = null;
     const len = 9;
     const geo = new THREE.ConeGeometry(Math.tan(0.4) * len, len, 40, 1, true);
     this.beamMat = new THREE.ShaderMaterial({
@@ -225,6 +232,12 @@ export class Torch {
     const power = state.on ? state.power : 0;
     this.light.intensity = this.baseIntensity * power;
     this.light.visible = power > 0.001;
+    if (this.bounce) {
+      // A faint fill between you and whatever the beam is on: up close (a wall, a face) it
+      // lights what is around the beam; down a long corridor it is next to nothing.
+      this.bounce.position.copy(origin).addScaledVector(this.dir, reach * 0.55);
+      this.bounce.intensity = this.baseIntensity * power * 0.014;
+    }
     // the cone
     const len = Math.max(0.5, Math.min(9, reach));
     this.beamMat.uniforms.uIntensity!.value = 0.05 * power;
@@ -263,5 +276,6 @@ export class Torch {
     this.dust?.geometry.dispose();
     this.dustMat?.dispose();
     this.light.dispose();
+    this.bounce?.dispose();
   }
 }

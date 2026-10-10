@@ -424,7 +424,13 @@ export class GameRenderer {
     // the beam leaves the lens of the torch in your hand, in front of it (so it never lights the torch)
     const origin = new THREE.Vector3(0.13, -0.135, -0.34).applyMatrix4(cam.matrixWorld);
     const aim = new THREE.Vector3(0, 0.02, -1).normalize().transformDirection(cam.matrixWorld);
-    const reach = this.beamReach(sim, origin, aim);
+    let reach = this.beamReach(sim, origin, aim);
+    // the beam stops at the Entity (or what you think is the Entity) when it is in the way
+    for (const body of this.actors.bodiesInView(this.tmp)) {
+      const to = body.sub(origin);
+      const along = to.dot(aim);
+      if (along > 0.05 && along < reach && to.addScaledVector(aim, -along).length() < 0.32 + along * 0.43) reach = along;
+    }
     this.torch.update(origin, aim, { on: power > 0, power }, dt, t, reach, pl.hidden ? 40 : 16);
     const lensMat = (this.fpTorch.children[2] as THREE.Mesh).material as THREE.MeshBasicMaterial;
     lensMat.color.setScalar(0.15 + power * 3.5);
