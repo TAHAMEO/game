@@ -129,9 +129,9 @@ export const BODY = {
   wallHeight: 1.75,
   /** Eye height for a `Player.eye` stance value (0.5 standing, 0.33 crouched, 0.1 under a bed). */
   eyeHeight: (eye: number): number => 0.2 + (eye - 0.1) * 2.2,
-  entityHeight: 1.95,
+  entityHeight: 1.62,
   /** Where its chest starts: a beam above this is "in its face". */
-  entityChest: 1.0,
+  entityChest: 0.9,
 } as const;
 
 /** Tuning that designers are expected to touch. Units: cells, seconds, "dB-ish" loudness. */
