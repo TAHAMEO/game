@@ -28,6 +28,8 @@ export class InputController {
   private keys = new Set<string>();
   private edges = new Set<string>();
   private mouseDX = 0;
+  /** Turning gathered on frames that ran no fixed step (fast displays), applied on the next one. */
+  private pendingTurn = 0;
   private rightClick = false;
   crouchToggled = false;
   sensitivity = 0.0024;
@@ -87,6 +89,7 @@ export class InputController {
     if (!this.enabled) {
       this.edges.clear();
       this.mouseDX = 0;
+      this.pendingTurn = 0;
       this.rightClick = false;
       return Array.from({ length: steps }, () => ({ ...base }));
     }
@@ -97,9 +100,12 @@ export class InputController {
     base.interact = k.has('KeyE');
     base.holdBreath = k.has('Space');
     const keyTurn = ((k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)) * 2.4 * dt;
-    let turn = this.mouseDX * this.sensitivity + keyTurn;
-    if (this.invertTurn) turn = -turn;
+    // At 120 Hz and up most frames run no step; keep their turning instead of dropping it.
+    this.pendingTurn += this.mouseDX * this.sensitivity + keyTurn;
     this.mouseDX = 0;
+    if (steps === 0) return [];
+    const turn = this.invertTurn ? -this.pendingTurn : this.pendingTurn;
+    this.pendingTurn = 0;
     const out: InputState[] = [];
     for (let i = 0; i < steps; i++) {
       const s = { ...base, turn: turn / Math.max(1, steps) };
@@ -110,10 +116,8 @@ export class InputController {
       }
       out.push(s);
     }
-    if (steps > 0) {
-      this.edges.clear();
-      this.rightClick = false;
-    }
+    this.edges.clear();
+    this.rightClick = false;
     return out;
   }
 
@@ -121,5 +125,6 @@ export class InputController {
     this.keys.clear();
     this.edges.clear();
     this.mouseDX = 0;
+    this.pendingTurn = 0;
   }
 }
