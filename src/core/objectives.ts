@@ -1,5 +1,6 @@
 import { cellCenter } from './level';
 import { dist } from './math';
+import type { Player } from './player';
 import type { Sim } from './sim';
 import type { Gate } from './types';
 
@@ -32,7 +33,7 @@ export class Objectives {
 
   stage(): Stage {
     const sim = this.sim;
-    if (!this.powerOn) return sim.player.inv.fuses >= sim.world.fusesRequired ? 'breaker' : 'fuses';
+    if (!this.powerOn) return sim.team.fuses >= sim.world.fusesRequired ? 'breaker' : 'fuses';
     if (!this.calls.length) return 'radio';
     return 'extract';
   }
@@ -40,7 +41,7 @@ export class Objectives {
   /** The cell the player is most plausibly heading for — the bait planner's prediction [T]. */
   predictedTarget(): number {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     switch (this.stage()) {
       case 'fuses': {
         const needKey = !pl.inv.keys.has('maintenance') && sim.world.doors.some((d) => d.lock === 'maintenance' && d.locked);
@@ -108,7 +109,7 @@ export class Objectives {
     return this.arrived && gate.id === this.realGate;
   }
 
-  escapeThrough(gate: Gate): void {
-    if (this.gateOpen(gate)) this.sim.onEscape();
+  escapeThrough(gate: Gate, pl: Player = this.sim.focus): void {
+    if (this.gateOpen(gate)) pl.escape();
   }
 }

@@ -3,6 +3,7 @@ import { SURVIVOR_POOL, type SurvivorDef } from './hospital';
 import { cellAt, cellCenter } from './level';
 import { dist, type Vec2 } from './math';
 import { NEST_SURVIVORS } from './persistence';
+import type { Player } from './player';
 import type { Sim } from './sim';
 import type { HidingSpot } from './types';
 
@@ -74,15 +75,31 @@ export class Survivors {
     return { pitch: sv.def.pitch, rate: sv.def.rate };
   }
 
+  /** The living player nearest to a point (the one a survivor reacts to). */
+  private nearestPlayer(at: Vec2): Player {
+    const sim = this.sim;
+    let best = sim.focus;
+    let bd = best.active ? dist(best.pos, at) : Infinity;
+    for (const p of sim.players) {
+      if (!p.active) continue;
+      const d = dist(p.pos, at);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
   update(dt: number): void {
     const sim = this.sim;
     const ent = sim.entity;
-    const pl = sim.player;
     for (const sv of this.list) {
       if (!sv.alive) continue;
       const p = sv.private_;
+      const pl = this.nearestPlayer(sv.pos);
       const dEnt = dist(ent.pos, sv.pos);
-      const dPl = dist(pl.pos, sv.pos);
+      const dPl = pl.active ? dist(pl.pos, sv.pos) : Infinity;
       const threatened = ent.threatening && dEnt < 6 && ent.stateKind !== 'chase';
 
       // Real calls for help. Ignore them and they die [X].
@@ -91,7 +108,7 @@ export class Survivors {
         if (dPl < 9) p.playerNearDuringThreat = true;
         if (sim.time >= p.nextCall) {
           p.nextCall = sim.time + 5;
-          this.speak(sv, sv.met ? `${sim.player.name.split(' ').pop()}! Help — it's here!` : 'Help! Someone — please — it’s here!', L.survivorCall, 'survivor');
+          this.speak(sv, sv.met ? `${pl.shortName}! Help — it's here!` : 'Help! Someone — please — it’s here!', L.survivorCall, 'survivor');
         }
       } else if (p.threatSince >= 0 && sim.time - p.threatSince > 2) {
         if (p.playerNearDuringThreat) {
@@ -151,22 +168,21 @@ export class Survivors {
   private speak(sv: Survivor, text: string, loud: number, source: 'survivor' | 'entity', mimic = false): void {
     const sim = this.sim;
     const n = sim.emitNoise('voice', sv.pos, loud, source === 'survivor' ? 'survivor' : 'entity', { speaker: sv.id });
-    sim.say(sv.def.name, text, { voice: this.voice(sv), mimic, volume: Math.min(1, (n.playerLevel ?? 0) / 30), pos: sv.pos });
+    sim.say(sv.def.name, text, { voice: this.voice(sv), mimic, volume: Math.min(1, (n.playerLevel ?? 0) / 30), pos: sv.pos, noise: n });
   }
 
-  whisperOccupied(id: number): void {
+  whisperOccupied(id: number, by: Player = this.sim.focus): void {
     const sv = this.list[id]!;
     this.emerge(sv);
-    this.talk(id);
+    this.talk(id, by);
   }
 
-  talk(id: number): void {
-    const sim = this.sim;
+  talk(id: number, by: Player = this.sim.focus): void {
     const sv = this.list[id]!;
     if (!sv.alive) return;
     sv.met = true;
     sv.waving = false;
-    const pl = sim.player;
+    const pl = by;
     const p = sv.private_;
     if (p.battery === 'asked' && pl.inv.batteries > 0) {
       pl.inv.batteries--;
@@ -176,7 +192,7 @@ export class Survivors {
       this.say(sv, 'Thank you. Here — it’s not much. Throw it, it chases the sound. Mostly.');
       return;
     }
-    const lines = this.lines(sv);
+    const lines = this.lines(sv, pl);
     const line = lines[Math.min(sv.talkIndex, lines.length - 1)]!;
     if (sv.talkIndex < lines.length) {
       sv.talkIndex++;
@@ -188,10 +204,10 @@ export class Survivors {
   }
 
   private say(sv: Survivor, text: string): void {
-    this.sim.say(sv.def.name, text, { voice: this.voice(sv), duration: 6 });
+    this.sim.say(sv.def.name, text, { voice: this.voice(sv), duration: 6, pos: sv.pos });
   }
 
-  private lines(sv: Survivor): string[] {
+  private lines(sv: Survivor, pl: Player): string[] {
     const sim = this.sim;
     const fuse = sim.world.items.find((i) => i.kind === 'fuse' && i.state === 'ground');
     const zone = fuse ? sim.level.zones[sim.level.zoneOf[cellAt(sim.level, fuse.pos)]!]!.name : null;
@@ -200,7 +216,7 @@ export class Survivors {
       zone ? `There was a fuse in ${zone}. I saw it before the lights went.` : 'The breaker’s in Maintenance. Downstairs. I’m not going down there.',
       'Don’t trust the lights. It likes it when you stand in the light.',
     ];
-    if (sim.player.inv.batteries > 0 && sv.private_.battery === 'unasked') out.push(ASK_BATTERY);
+    if (pl.inv.batteries > 0 && sv.private_.battery === 'unasked') out.push(ASK_BATTERY);
     out.push('If you hear me calling for you… make sure it’s me.');
     return out;
   }
@@ -238,14 +254,14 @@ export class Survivors {
   }
 
   /** The Entity, wearing someone [X]. Identical name, identical voice. */
-  mimicCall(id: number, at: Vec2): void {
+  mimicCall(id: number, at: Vec2, to: Player = this.sim.focus): void {
     const sim = this.sim;
     const sv = this.list[id]!;
-    const first = sim.player.name.split(' ').pop();
+    const first = to.shortName;
     const lines = ['Over here… please.', 'Help me. I can’t — I can’t walk.', 'Is someone there? Please.', `${first}? Is that you? Over here.`];
     let text = sim.rng.pick(lines);
     if (sim.director.tier < 3 && sim.rng.chance(0.35)) text = 'Over here… over here… over here.';
     const n = sim.emitNoise('voice', at, 40, 'entity', { speaker: sv.id });
-    sim.say(sv.def.name, text, { voice: this.voice(sv), mimic: true, volume: Math.min(1, (n.playerLevel ?? 0) / 30), pos: at });
+    sim.say(sv.def.name, text, { voice: this.voice(sv), mimic: true, volume: Math.min(1, (n.playerLevel ?? 0) / 30), pos: at, noise: n });
   }
 }

@@ -1,7 +1,8 @@
-import { TUNING } from './config';
+import { BODY, TUNING } from './config';
 import { cellAt, cellCenter, Tile } from './level';
 import { angleDiff, angleTo, clamp01, dist, lerp, smoothstep, turnToward, wrapAngle, type Vec2 } from './math';
 import { findPath } from './path';
+import type { Player } from './player';
 import type { MoveMode, Plan, PlanStep } from './plans';
 import type { Sim } from './sim';
 import type { FogPuff, HidingSpot, Item, Noise, ThermalMark } from './types';
@@ -26,28 +27,36 @@ export type EntityState =
   | { kind: 'listen'; until: number; fake: boolean; resume: EntityState }
   | { kind: 'investigate'; target: Vec2; precise: boolean; reason: string; arrived: boolean; lookUntil: number; checks: number[] }
   | { kind: 'hunt'; center: Vec2; radius: number; until: number; point: number; reason: string; checks: number[]; trail: number }
-  | { kind: 'chase'; lostAt: number; survivor: number | null }
-  | { kind: 'lunge'; t: number; struck: boolean; recover: number; survivor: number | null }
+  | { kind: 'chase'; lostAt: number; survivor: number | null; player?: number }
+  | { kind: 'lunge'; t: number; struck: boolean; recover: number; survivor: number | null; player?: number }
   | { kind: 'check'; spot: number; phase: 'approach' | 'inhale' | 'open' | 'linger'; t: number; fake: boolean; certain: boolean; reason: string; queue: number[] }
   | { kind: 'leave'; phase: 'turn' | 'walk'; t: number; dest: number; fake: boolean; from: Vec2 }
   | { kind: 'feint'; until: number; origin: Vec2 }
   | { kind: 'plan'; plan: Plan; step: number; t: number; arrived: boolean }
   | { kind: 'feed'; until: number }
   | { kind: 'retreat'; dest: number; then: 'rest' | 'feed' }
-  | { kind: 'kill'; t: number; victim: 'player' | number; spot: number | null }
+  | { kind: 'kill'; t: number; victim: 'player' | number; spot: number | null; player?: number }
   | { kind: 'mimic'; survivor: number; cell: number; until: number; nextCall: number; arrived: boolean };
 
 interface Percepts {
   vis: number;
   beamOnMe: boolean;
+  /** The player it sees best (or whose beam is in its face). */
+  seen: Player | null;
   sound: { noise: Noise; pos: Vec2; margin: number } | null;
   thermal: ThermalMark | null;
   fog: FogPuff | null;
   scent: Vec2 | null;
+  /** Whose mark it smells. */
+  scentOf: Player | null;
   survivor: number | null;
 }
 
+const noPercepts = (): Percepts => ({ vis: 0, beamOnMe: false, seen: null, sound: null, thermal: null, fog: null, scent: null, scentOf: null, survivor: null });
+
 const E = TUNING.entity;
+/** Half-angle of a torch beam (radians); matches the renderer's spotlight. */
+const BEAM = 0.38;
 /** Attunement only applies to sounds that physically reached it. */
 const lv0 = (n: Noise): boolean => (n.entityLevel ?? 0) > 0;
 const LOUD = TUNING.loudness;
@@ -100,7 +109,7 @@ export class Entity {
   private trailT = -999;
   private tellSeq = 1;
   private lastBeamRespect = -999;
-  private percepts: Percepts = { vis: 0, beamOnMe: false, sound: null, thermal: null, fog: null, scent: null, survivor: null };
+  private percepts: Percepts = noPercepts();
   private lastNoiseId = 0;
   private closingPlan = false;
 
@@ -114,6 +123,20 @@ export class Entity {
 
   get cell(): number {
     return cellAt(this.sim.level, this.pos);
+  }
+
+  /** The player it is engaged with right now (chasing, striking, killing), if any. */
+  get target(): number | null {
+    const s = this.state;
+    if ((s.kind === 'chase' || s.kind === 'lunge') && s.survivor === null) return s.player ?? this.sim.focus.id;
+    if (s.kind === 'kill') return s.player ?? 0;
+    return null;
+  }
+
+  /** The player a chase, strike or kill is about. */
+  private quarry(id: number | undefined): Player {
+    const sim = this.sim;
+    return (id !== undefined ? sim.players[id] : undefined) ?? sim.focus;
   }
 
   get stateKind(): EntityState['kind'] {
@@ -182,10 +205,19 @@ export class Entity {
 
   private sense(dt: number): void {
     const sim = this.sim;
-    const p: Percepts = { vis: 0, beamOnMe: false, sound: null, thermal: null, fog: null, scent: null, survivor: null };
-    const sight = this.sightOfPlayer();
-    p.vis = sight.vis;
-    p.beamOnMe = sight.beam;
+    const p = noPercepts();
+    // Sight: everyone in the building, the best-seen one wins. A beam in its face counts first.
+    for (const pl of sim.players) {
+      if (!pl.active) continue;
+      const sight = this.sightOfPlayer(pl);
+      if (sight.vis <= 0 && !sight.beam) continue;
+      const better = !p.seen || (sight.beam && !p.beamOnMe) || (sight.beam === p.beamOnMe && sight.vis > p.vis);
+      if (better) {
+        p.vis = sight.vis;
+        p.beamOnMe = sight.beam;
+        p.seen = pl;
+      }
+    }
 
     // Hearing: everything not yet processed, loudest margin wins.
     const threshold = this.hearingThreshold();
@@ -209,7 +241,7 @@ export class Entity {
 
     // [V] Thermal residue — only read while actively hunting.
     const k = this.state.kind;
-    const hunting = k === 'hunt' || k === 'investigate' || k === 'check' || (k === 'chase' && sight.vis === 0);
+    const hunting = k === 'hunt' || k === 'investigate' || k === 'check' || (k === 'chase' && p.vis === 0);
     if (sim.features.thermalResidue && hunting && sim.time >= this.nextThermalScan) {
       this.nextThermalScan = sim.time + 0.4;
       let best: ThermalMark | null = null;
@@ -237,11 +269,15 @@ export class Entity {
     }
 
     // [V] The mark: it tracks you across zones without sight or sound.
-    if (sim.features.theMark && sim.player.isMarked && sim.time >= this.nextScent) {
+    const marked = sim.players.filter((pl) => pl.active && pl.isMarked);
+    if (sim.features.theMark && marked.length && sim.time >= this.nextScent) {
       this.nextScent = sim.time + 3.5;
-      const pp = sim.player.hidden ? cellCenter(sim.level, sim.player.hidden.access) : sim.player.pos;
+      let who = marked[0]!;
+      for (const pl of marked) if (dist(pl.pos, this.pos) < dist(who.pos, this.pos)) who = pl;
+      const pp = who.hidden ? cellCenter(sim.level, who.hidden.access) : who.pos;
       p.scent = { x: pp.x + sim.rng.range(-1, 1), y: pp.y + sim.rng.range(-1, 1) };
       if (sim.world.isSolid(cellAt(sim.level, p.scent))) p.scent = { ...pp };
+      p.scentOf = who;
     }
 
     // Survivors in the open are prey too [L, X].
@@ -296,15 +332,14 @@ export class Entity {
     return this.sim.world.los(this.pos, pt);
   }
 
-  /** How visible is the player to it right now? Light, stance, motion, the torch [A, S]. */
-  sightOfPlayer(): { vis: number; beam: boolean } {
+  /** How visible is a player to it right now? Light, stance, motion, the torch [A, S]. */
+  sightOfPlayer(pl: Player = this.sim.focus): { vis: number; beam: boolean } {
     const sim = this.sim;
-    const pl = sim.player;
-    if (!pl.alive || !pl.exposed) return { vis: 0, beam: false };
+    if (!pl.active || !pl.exposed) return { vis: 0, beam: false };
     const d = dist(this.pos, pl.pos);
     if (d > 26) return { vis: 0, beam: false };
     const los = sim.world.los(this.pos, pl.pos);
-    if (!los) return { vis: 0, beam: this.beamSpotSeen() };
+    if (!los) return { vis: 0, beam: this.beamSpotSeen(pl) };
     const inFov = Math.abs(angleDiff(this.angle, angleTo(this.pos, pl.pos))) <= this.fov() / 2;
     let vis = 0;
     if (inFov) {
@@ -321,24 +356,29 @@ export class Entity {
     let beam = false;
     if (pl.flashlight.on) {
       const off = Math.abs(angleDiff(pl.angle, angleTo(pl.pos, this.pos)));
-      if (off < 0.38 && d < 22) {
+      // The beam has to be on its face and chest, not on the floor in front of it.
+      const eye = BODY.eyeHeight(pl.eye);
+      const lo = Math.atan2(BODY.entityChest - eye, Math.max(0.3, d));
+      const hi = Math.atan2(BODY.entityHeight - eye, Math.max(0.3, d));
+      if (off < BEAM && d < 22 && pl.pitch + BEAM > lo && pl.pitch - BEAM < hi) {
         beam = true;
         vis = Math.max(vis, 0.95 * (1 - d / 24) * sim.director.beamMultiplier());
       }
     }
     if (!beam && !inFov) return { vis: 0, beam: false };
-    if (!beam && pl.flashlight.on) vis = Math.max(vis, this.beamSpotSeen() ? 0.25 : 0);
+    if (!beam && pl.flashlight.on) vis = Math.max(vis, this.beamSpotSeen(pl) ? 0.25 : 0);
     return { vis: clamp01(vis), beam };
   }
 
-  /** Can it see the spot your torch is painting on the wall? */
-  private beamSpotSeen(): boolean {
+  /** Can it see the spot a torch is painting on the wall (or the floor)? */
+  private beamSpotSeen(pl: Player): boolean {
     const sim = this.sim;
-    const pl = sim.player;
     if (!pl.flashlight.on) return false;
     const d = pl.dir;
+    // Aimed down, the beam lands on the floor a few steps ahead; level, it runs to the wall.
+    const reach = pl.pitch < -0.3 ? Math.min(6, BODY.eyeHeight(pl.eye) / Math.tan(-pl.pitch)) : 6;
     let spot = { ...pl.pos };
-    for (let s = 0.5; s <= 6; s += 0.5) {
+    for (let s = 0.5; s <= reach; s += 0.5) {
       const q = { x: pl.pos.x + d.x * s, y: pl.pos.y + d.y * s };
       if (sim.world.isOpaque(cellAt(sim.level, q))) break;
       spot = q;
@@ -373,7 +413,8 @@ export class Entity {
     const pc = this.percepts;
     const k = this.state.kind;
     if (k === 'lunge' || k === 'kill') return;
-    const pl = sim.player;
+    // Whoever it sees; otherwise whoever the Director is reading.
+    const pl = pc.seen ?? sim.focus;
     const floor = sim.director.floor;
     const ambushing = k === 'mimic' || k === 'feint' || this.planIsCommitted();
 
@@ -387,11 +428,11 @@ export class Entity {
         return;
       }
       if (resp === 'betray') {
-        sim.director.onBeamBetrayal();
+        sim.director.onBeamBetrayal(pl);
         this.suspicion = 1.2;
         this.lkp = { ...pl.pos };
         this.lkpT = sim.time;
-        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null }, 'it walks into the beam');
+        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null, player: pl.id }, 'it walks into the beam');
         return;
       }
     }
@@ -408,12 +449,17 @@ export class Entity {
       if (ambushing && (this.suspicion > 0.2 || d < 4)) {
         if (k === 'feint') sim.director.onFeintResolved(true);
         this.startTell('snap', 0.3, false);
-        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null }, ambushing ? 'the trap springs' : 'seen');
+        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null, player: pl.id }, ambushing ? 'the trap springs' : 'seen');
         return;
       }
       if (k !== 'chase' && (this.suspicion >= 1 || (d < 2.4 && pc.vis > 0.3))) {
-        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null }, 'it sees you');
+        this.setState({ kind: 'chase', lostAt: sim.time, survivor: null, player: pl.id }, 'it sees you');
         return;
+      }
+      if (k === 'chase' && this.state.kind === 'chase' && this.state.survivor === null && this.state.player !== pl.id) {
+        // Chasing someone it can no longer see, and here is someone it can: it takes the nearer meal.
+        const cur = this.quarry(this.state.player);
+        if (!cur.active || !cur.exposed || this.sightOfPlayer(cur).vis === 0) this.state.player = pl.id;
       }
       if (this.suspicion >= 0.3 && this.state.kind === 'investigate') {
         this.state.target = { ...pl.pos };
@@ -431,21 +477,25 @@ export class Entity {
     if (k === 'chase') {
       // While chasing, sounds keep it on you after line of sight breaks.
       const s = pc.sound;
+      const chase = this.state.kind === 'chase' ? this.state : null;
       if (s && s.noise.source === 'player' && pc.vis === 0 && s.margin > 4) {
         this.lkp = { ...s.pos };
         this.lkpT = sim.time;
+        if (chase && chase.survivor === null && s.noise.player !== undefined) chase.player = s.noise.player;
       }
       if (pc.scent && pc.vis === 0) {
         this.lkp = { ...pc.scent };
         this.lkpT = sim.time;
+        if (chase && chase.survivor === null && pc.scentOf) chase.player = pc.scentOf.id;
       }
       return;
     }
 
     // ---- [V] the mark: scent overrides almost everything
     if (pc.scent && !ambushing && k !== 'check') {
-      if (pl.hidden && sim.director.checkScore(pl.hidden, 'scent') > 0.6 && dist(this.pos, pc.scent) < 6) {
-        this.beginCheck([pl.hidden.id], false, 'it can smell you in there');
+      const smelt = pc.scentOf ?? pl;
+      if (smelt.hidden && sim.director.checkScore(smelt.hidden, 'scent') > 0.6 && dist(this.pos, pc.scent) < 6) {
+        this.beginCheck([smelt.hidden.id], false, 'it can smell you in there');
         return;
       }
       if (k !== 'investigate' || dist((this.state as { target: Vec2 }).target, pc.scent) > 3) {
@@ -753,7 +803,15 @@ export class Entity {
 
   private tickChase(s: Extract<EntityState, { kind: 'chase' }>, dt: number): void {
     const sim = this.sim;
-    const pl = sim.player;
+    let pl = this.quarry(s.player);
+    if (s.survivor === null && !pl.active) {
+      // Its quarry is dead or gone. Anyone else in sight will do.
+      const next = this.percepts.seen;
+      if (next && next.active) {
+        s.player = next.id;
+        pl = next;
+      }
+    }
     if (s.survivor !== null) {
       const sv = sim.survivors.list[s.survivor]!;
       if (!sv.alive || sv.spot) {
@@ -778,32 +836,35 @@ export class Entity {
         return;
       }
     }
-    if (!pl.alive) {
-      this.idleNext('quarry dead');
+    if (!pl.active) {
+      this.idleNext(pl.alive ? 'quarry got out' : 'quarry dead');
       return;
     }
-    const d = dist(this.pos, pl.pos);
-    if (pl.exposed && d <= E.reach && sim.world.los(this.pos, pl.pos)) {
-      this.setState({ kind: 'lunge', t: 0, struck: false, recover: 0, survivor: null }, 'within reach');
-      this.startTell('inhale', E.lungeWindup, false);
-      return;
+    // Anyone exposed within reach is struck — not only the one it was after.
+    for (const other of sim.players) {
+      if (!other.active || !other.exposed) continue;
+      if (dist(this.pos, other.pos) <= E.reach && sim.world.los(this.pos, other.pos)) {
+        this.setState({ kind: 'lunge', t: 0, struck: false, recover: 0, survivor: null, player: other.id }, other === pl ? 'within reach' : `${other.shortName} was closer`);
+        this.startTell('inhale', E.lungeWindup, false);
+        return;
+      }
     }
     if (!sees && sim.time - s.lostAt > 2.6) {
-      sim.director.onChaseLost();
+      sim.director.onChaseLost(pl);
       this.hunt(this.lkp ?? pl.pos, 6, 'lost sight of you');
       return;
     }
-    const target = sees ? pl.pos : (this.lkp ?? pl.pos);
+    const target = sees && this.percepts.seen === pl ? pl.pos : (this.lkp ?? pl.pos);
     const r = this.goTo(cellAt(sim.level, target), 'chase', dt, target);
     if (r === 'arrived' && !sees) {
-      sim.director.onChaseLost();
+      sim.director.onChaseLost(pl);
       this.hunt(target, 5, 'reached where you were');
     }
   }
 
   private tickLunge(s: Extract<EntityState, { kind: 'lunge' }>, dt: number): void {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.quarry(s.player);
     s.t += dt;
     const targetPos = s.survivor !== null ? sim.survivors.list[s.survivor]!.pos : pl.pos;
     if (!s.struck) this.angle = turnToward(this.angle, angleTo(this.pos, targetPos), dt * 8);
@@ -824,35 +885,36 @@ export class Entity {
         s.recover = 0.7;
       } else {
         const d = dist(this.pos, pl.pos);
-        if (pl.exposed && d <= E.reach + 0.35 && sim.world.los(this.pos, pl.pos)) {
+        if (pl.active && pl.exposed && d <= E.reach + 0.35 && sim.world.los(this.pos, pl.pos)) {
+          sim.scares.onStrike(pl);
           const killed = pl.hurt('It caught you in the open.');
           if (killed) {
-            this.setState({ kind: 'kill', t: 0, victim: 'player', spot: null }, 'the kill');
+            this.setState({ kind: 'kill', t: 0, victim: 'player', spot: null, player: pl.id }, 'the kill');
             return;
           }
-          sim.director.onPlayerHit();
-          this.markPlayer('wound');
+          sim.director.onPlayerHit(pl);
+          this.markPlayer('wound', pl);
           s.recover = 1.7;
         } else {
-          sim.director.onNearMiss();
-          if (d < 2.4) this.markPlayer('near miss');
+          sim.director.onNearMiss(pl);
+          if (d < 2.4) this.markPlayer('near miss', pl);
           s.recover = 0.75;
         }
       }
     }
     if (s.struck && s.t >= E.lungeWindup + s.recover) {
       if (s.survivor !== null) this.idleNext('missed');
-      else this.setState({ kind: 'chase', lostAt: sim.time, survivor: null }, 'after you');
+      else this.setState({ kind: 'chase', lostAt: sim.time, survivor: null, player: pl.id }, 'after you');
     }
   }
 
-  private markPlayer(why: string): void {
+  private markPlayer(why: string, pl: Player = this.sim.focus): void {
     const sim = this.sim;
     if (!sim.features.theMark) return;
-    const wasMarked = sim.player.isMarked;
-    sim.player.markedUntil = sim.time + 100;
+    const wasMarked = pl.isMarked;
+    pl.markedUntil = sim.time + 100;
     if (!wasMarked) {
-      sim.notice('Something black and wet soaked through your sleeve. It smells like the morgue.', 6);
+      sim.notice('Something black and wet soaked through your sleeve. It smells like the morgue.', 6, pl.id);
       sim.director.onMarked(why);
     }
   }
@@ -899,8 +961,10 @@ export class Entity {
         if (s.t < 0.9) return;
         spot.lastChecked = sim.time;
         if (spot.occupant?.kind === 'player') {
+          const found = sim.players[spot.occupant.id ?? 0];
           sim.director.onSpotChecked(spot, true);
-          this.setState({ kind: 'kill', t: 0, victim: 'player', spot: spot.id }, `found you in the ${spot.kind}`);
+          if (found) sim.scares.onFound(found);
+          this.setState({ kind: 'kill', t: 0, victim: 'player', spot: spot.id, player: spot.occupant.id ?? 0 }, `found you in the ${spot.kind}`);
           return;
         }
         if (spot.occupant?.kind === 'survivor') {
@@ -960,11 +1024,12 @@ export class Entity {
     const sim = this.sim;
     s.t += dt;
     if (s.victim === 'player') {
-      if (s.t > 0.9 && sim.player.alive) {
+      const victim = this.quarry(s.player);
+      if (s.t > 0.9 && victim.alive && !victim.escaped) {
         const spot = s.spot !== null ? sim.world.spots[s.spot]! : null;
-        sim.player.die(spot ? `It found you in the ${spot.kind === 'bed' ? 'dark under the bed' : spot.kind}.` : 'It caught you in the open.');
+        victim.die(spot ? `It found you in the ${spot.kind === 'bed' ? 'dark under the bed' : spot.kind}.` : 'It caught you in the open.');
       }
-      if (s.t > 2) this.retreat('feed', 'takes you home');
+      if (s.t > 2) this.retreat('feed', sim.players.length > 1 ? `takes ${victim.shortName} home` : 'takes you home');
     }
   }
 
@@ -977,17 +1042,19 @@ export class Entity {
       return;
     }
     this.disguise = s.survivor;
-    const pl = sim.player;
+    // It faces whoever is nearest: that is who it is calling.
+    let pl = sim.focus;
+    for (const p of sim.players) if (p.active && (!pl.active || dist(p.pos, this.pos) < dist(pl.pos, this.pos))) pl = p;
     const d = dist(this.pos, pl.pos);
     this.angle = turnToward(this.angle, angleTo(this.pos, pl.pos), dt * 2);
     if (sim.time >= s.nextCall) {
       s.nextCall = sim.time + sim.rng.range(6, 10);
-      sim.survivors.mimicCall(s.survivor, this.pos);
+      sim.survivors.mimicCall(s.survivor, this.pos, pl);
     }
-    if (pl.exposed && d < 3.2 && sim.world.los(this.pos, pl.pos)) {
+    if (pl.active && pl.exposed && d < 3.2 && sim.world.los(this.pos, pl.pos)) {
       this.disguise = null;
       sim.director.onMimicSprung(s.survivor);
-      this.setState({ kind: 'lunge', t: 0, struck: false, recover: 0, survivor: null }, 'you came when it called');
+      this.setState({ kind: 'lunge', t: 0, struck: false, recover: 0, survivor: null, player: pl.id }, 'you came when it called');
       this.startTell('inhale', E.lungeWindup, false);
       return;
     }
@@ -1100,10 +1167,10 @@ export class Entity {
         if (r !== 'arrived') return;
         // Re-check on arrival: you may have moved since the plan was made.
         const inDoorway = (p: Vec2) => cellAt(sim.level, p) === door.cell;
-        if (inDoorway(sim.player.pos) || sim.survivors.list.some((sv) => sv.alive && inDoorway(sv.pos))) {
+        if (sim.players.some((p) => p.active && inDoorway(p.pos)) || sim.survivors.list.some((sv) => sv.alive && inDoorway(sv.pos))) {
           return this.abortPlan(s.plan, 'someone is in the doorway');
         }
-        if (world.wouldStrand(door.cell, sim.player.soundCell)) return this.abortPlan(s.plan, 'it would cut you off from the way out');
+        if (sim.players.some((p) => p.active && world.wouldStrand(door.cell, p.soundCell))) return this.abortPlan(s.plan, 'it would cut you off from the way out');
         door.target = 0;
         door.jammed = true;
         world.lockVersion++;
@@ -1252,15 +1319,19 @@ export class Entity {
   private costFn(mode: MoveMode): ((c: number) => number) | undefined {
     const sim = this.sim;
     if (mode === 'stalk') {
-      // Stalking prefers darkness and avoids your sight lines.
-      const pl = sim.player;
+      // Stalking prefers darkness and avoids everyone's sight lines.
+      const watchers = sim.players.filter((p) => p.active);
       const lum = sim.world.lighting.lum;
       return (c) => {
         let cost = lum[c]! * 5;
         const p = cellCenter(sim.level, c);
-        if (pl.alive && dist(p, pl.pos) < 10) {
+        for (const pl of watchers) {
+          if (dist(p, pl.pos) >= 10) continue;
           const off = Math.abs(angleDiff(pl.angle, angleTo(pl.pos, p)));
-          if (off < 0.9 && sim.world.los(pl.pos, p)) cost += 4;
+          if (off < 0.9 && sim.world.los(pl.pos, p)) {
+            cost += 4;
+            break;
+          }
         }
         return cost;
       };

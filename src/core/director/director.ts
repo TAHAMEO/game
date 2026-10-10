@@ -3,6 +3,7 @@ import { cellAt, cellCenter, Tile } from '../level';
 import { clamp01, dist, lerp, type Vec2 } from '../math';
 import { distanceField } from '../path';
 import type { Plan, PlanOutcome } from '../plans';
+import type { Player } from '../player';
 import type { Sim } from '../sim';
 import type { DoorState, HidingSpot, Item, Noise, Note, Prop, ThermalMark } from '../types';
 import { World } from '../world';
@@ -28,10 +29,8 @@ export type Activity =
  * and use its own senses.
  */
 export class Director {
-  readonly stress = new StressModel();
   readonly profile: Profile;
   readonly debt: Debt;
-  readonly perception: Perception;
   readonly flashTax: FlashlightTax;
   readonly adapt: Adaptation;
   readonly bait: BaitPlanner;
@@ -41,18 +40,28 @@ export class Director {
   stalkUntil = -1;
   /** For the designer overlay: the last thing the Director decided and why. */
   lastDecision = '';
-  private punishedHide: HidingSpot | null = null;
-  private lastEntityHeard = -99;
+  private readonly punishedHide = new Map<number, HidingSpot>();
+  /** When each player last heard it, by player id. */
+  private readonly lastEntityHeard = new Map<number, number>();
   private runXpFromEscapes = 0;
   private relaxDur = 45;
 
   constructor(private readonly sim: Sim) {
     this.profile = new Profile(sim);
     this.debt = new Debt(sim.features.risingFloor);
-    this.perception = new Perception(sim);
     this.flashTax = new FlashlightTax(sim);
     this.adapt = new Adaptation(sim);
     this.bait = new BaitPlanner(sim);
+  }
+
+  /** The live stress estimate of the player the Director is reading [S]. */
+  get stress(): StressModel {
+    return this.sim.focus.stress;
+  }
+
+  /** What the focus player's panic is showing them [S]. */
+  get perception(): Perception {
+    return this.sim.focus.perception;
   }
 
   /** Z: the Entity's rising baseline awareness, 0..1. */
@@ -68,26 +77,38 @@ export class Director {
 
   // ================================================================== update
 
-  update(dt: number): void {
+  /** How present the real threat is for one player, 0..1. */
+  threatTo(pl: Player): number {
     const sim = this.sim;
-    const pl = sim.player;
     const ent = sim.entity;
     const d = dist(ent.pos, pl.pos);
-    const seen = this.adapt.playerSeesEntity();
-    const heard = sim.time - this.lastEntityHeard < 3;
-    const threat = clamp01(
-      (ent.stateKind === 'chase' || ent.stateKind === 'lunge' ? 0.7 : 0) +
+    const seen = this.adapt.playerSeesEntity(pl);
+    const heard = sim.time - (this.lastEntityHeard.get(pl.id) ?? -99) < 3;
+    const engaged = ent.target === pl.id || (ent.target === null && ent.stateKind === 'chase' && sim.focus === pl);
+    return clamp01(
+      ((ent.stateKind === 'chase' || ent.stateKind === 'lunge') && engaged ? 0.7 : 0) +
         (seen ? 0.45 : 0) +
         (heard ? 0.2 : 0) +
         (ent.threatening && d < 8 ? 0.25 : 0),
     );
-    this.stress.update(dt, {
-      turnRate: pl.turnRate,
-      sprinting: pl.sprinting,
-      threat,
-      hidden: !!pl.hidden,
-      reversals: this.profile.reversals,
-    });
+  }
+
+  update(dt: number): void {
+    const sim = this.sim;
+    const pl = sim.focus;
+    let threat = 0;
+    for (const p of sim.players) {
+      if (!p.active) continue;
+      const t = this.threatTo(p);
+      if (p === pl) threat = t;
+      p.stress.update(dt, {
+        turnRate: p.turnRate,
+        sprinting: p.sprinting,
+        threat: t,
+        hidden: !!p.hidden,
+        reversals: p === pl ? this.profile.reversals : 0,
+      });
+    }
     this.profile.update(dt);
     const zone = sim.world.zoneIndexAt(pl.cell);
     this.debt.update(dt, {
@@ -96,7 +117,7 @@ export class Director {
       speed: pl.speed,
       inFalseLead: this.inFalseLead(zone),
     });
-    this.perception.update(dt);
+    for (const p of sim.players) p.perception.update(dt);
     this.flashTax.update();
     this.adapt.update(dt);
     this.bait.update();
@@ -114,7 +135,7 @@ export class Director {
    */
   private considerPlans(): void {
     const sim = this.sim;
-    if (sim.time < this.nextPlanCheck || this.phase === 'relax' || !sim.player.alive) return;
+    if (sim.time < this.nextPlanCheck || this.phase === 'relax' || !sim.focus.active) return;
     this.nextPlanCheck = sim.time + 4;
     const k = sim.entity.stateKind;
     const passive = k === 'roam' || (k === 'leave' && sim.entity.stateT > 2);
@@ -133,7 +154,7 @@ export class Director {
     // Loitering at a door that will never open.
     for (const door of sim.world.doors) {
       if (!door.locked || door.lock === 'maintenance') continue;
-      if (dist(cellCenter(sim.level, door.cell), sim.player.pos) < 2.5) return true;
+      if (dist(cellCenter(sim.level, door.cell), sim.focus.pos) < 2.5) return true;
     }
     return false;
   }
@@ -187,7 +208,8 @@ export class Director {
     }
     this.chaseFor += dt;
     const leash = lerp(14, 34, this.floor);
-    if (k === 'chase' && this.chaseFor > leash && dist(ent.pos, sim.player.pos) > 2) {
+    const quarry = sim.players[ent.target ?? sim.focus.id] ?? sim.focus;
+    if (k === 'chase' && this.chaseFor > leash && dist(ent.pos, quarry.pos) > 2) {
       this.chaseFor = 0;
       sim.log('director', `chase called off after ${leash.toFixed(0)}s (the leash grows with the debt)`);
       ent.startLeave(true, 'it slows — and lets you go. This time.');
@@ -197,19 +219,21 @@ export class Director {
   /** J: the punishing pause. Hiding too long draws it in. */
   private punishingPause(): void {
     const sim = this.sim;
-    const pl = sim.player;
-    const spot = pl.hidden;
-    if (!spot) {
-      this.punishedHide = null;
-      return;
-    }
-    const grace = lerp(30, 12, this.floor);
-    if (pl.hiddenFor < grace || this.punishedHide === spot) return;
-    const ent = sim.entity;
-    const k = ent.stateKind;
-    if (k === 'roam' || k === 'rest' || k === 'retreat' || k === 'leave') {
-      this.punishedHide = spot;
-      ent.hunt(cellCenter(sim.level, spot.access), 3.5, '[J] you have been still too long', 25);
+    for (const pl of sim.players) {
+      const spot = pl.active ? pl.hidden : null;
+      if (!spot) {
+        this.punishedHide.delete(pl.id);
+        continue;
+      }
+      const grace = lerp(30, 12, this.floor);
+      if (pl.hiddenFor < grace || this.punishedHide.get(pl.id) === spot) continue;
+      const ent = sim.entity;
+      const k = ent.stateKind;
+      if (k === 'roam' || k === 'rest' || k === 'retreat' || k === 'leave') {
+        this.punishedHide.set(pl.id, spot);
+        ent.hunt(cellCenter(sim.level, spot.access), 3.5, '[J] you have been still too long', 25);
+        return;
+      }
     }
   }
 
@@ -217,13 +241,13 @@ export class Director {
 
   nextActivity(entity: Entity): Activity {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     const nest = sim.level.markers.nest;
     const decide = (a: Activity): Activity => {
       this.lastDecision = a.kind === 'plan' ? `plan ${a.plan.kind}` : `${a.kind}: ${a.reason}`;
       return a;
     };
-    if (this.phase === 'relax' && !pl.isMarked) {
+    if (this.phase === 'relax' && !sim.players.some((p) => p.active && p.isMarked)) {
       const home = nest.length ? cellCenter(sim.level, nest[0]!) : entity.pos;
       if (dist(entity.pos, home) > 4) return decide({ kind: 'retreat', reason: 'the Director gives you a breath (shorter every time)' });
       return decide({ kind: 'roam', cell: this.leaveTarget(entity), reason: 'drifting' });
@@ -277,7 +301,7 @@ export class Director {
       const p = cellCenter(level, c);
       // Short legs: it re-decides often, which is what makes it feel like it is thinking.
       if (dist(p, from) > 24 && i < 12) continue;
-      const score = bias * dist(p, sim.player.pos) + (1 - bias) * sim.rng.range(0, 40);
+      const score = bias * dist(p, sim.focus.pos) + (1 - bias) * sim.rng.range(0, 40);
       if (score < bestScore) {
         bestScore = score;
         best = c;
@@ -296,7 +320,10 @@ export class Director {
       const c = sim.rng.pick(r.cells);
       if (level.tiles[c] !== Tile.Floor || !this.reachable(c)) continue;
       const p = cellCenter(level, c);
-      const d = dist(p, sim.player.pos);
+      // Away from everyone: the nearest player decides how far "away" is.
+      let d = Infinity;
+      for (const pl of sim.players) if (pl.active) d = Math.min(d, dist(p, pl.pos));
+      if (!Number.isFinite(d)) d = dist(p, sim.focus.pos);
       if (d > bestD && dist(p, entity.pos) < 26) {
         bestD = d;
         best = c;
@@ -373,10 +400,10 @@ export class Director {
   /** How much does a hiding place deserve a look? */
   checkScore(spot: HidingSpot, ctx: 'search' | 'scent' | 'inhale'): number {
     const sim = this.sim;
-    const pl = sim.player;
     let s = 0.12;
     if (spot.body) return -1;
     if (spot.occupant?.kind === 'player') {
+      const pl = sim.players[spot.occupant.id ?? 0] ?? sim.focus;
       const grace = lerp(30, 12, this.floor);
       s += clamp01((pl.hiddenFor - grace) / 25) * 0.6; // J: the punishing pause
       s += 0.25 * this.floor;
@@ -418,7 +445,10 @@ export class Director {
   onEntityState(prev: EntityState['kind'], next: EntityState['kind'], reason: string): void {
     void prev;
     void reason;
-    if (next === 'chase') this.stress.spike(0.15);
+    if (next === 'chase') {
+      const t = this.sim.entity.target;
+      (this.sim.players[t ?? this.sim.focus.id] ?? this.sim.focus).stress.spike(0.15);
+    }
   }
 
   onTell(tell: Tell, audibleLevel: number): void {
@@ -441,9 +471,9 @@ export class Director {
     this.sim.log('S', 'flashlight tax (lull): it backs away from your beam');
   }
 
-  onBeamBetrayal(): void {
+  onBeamBetrayal(pl: Player = this.sim.focus): void {
     this.flashTax.onBetrayalConsumed();
-    this.sim.player.faultFlashlight(this.sim.rng.range(3.5, 5.5));
+    pl.faultFlashlight(this.sim.rng.range(3.5, 5.5));
     this.sim.log('S', 'flashlight tax: it walks straight into the beam now');
   }
 
@@ -461,18 +491,18 @@ export class Director {
     this.sim.log('V', `it reads a warm print on a ${m.surface}`);
   }
 
-  onChaseLost(): void {
+  onChaseLost(pl: Player = this.sim.focus): void {
     const sim = this.sim;
-    const r = sim.world.regionAt(sim.player.cell);
+    const r = sim.world.regionAt(pl.cell);
     if (r >= 0 && sim.level.regions[r]!.kind === 'corridor') this.adapt.addTactic(`route:${r}`);
   }
 
-  onPlayerHit(): void {
-    this.stress.spike(0.5);
+  onPlayerHit(pl: Player = this.sim.focus): void {
+    pl.stress.spike(0.5);
   }
 
-  onNearMiss(): void {
-    this.stress.spike(0.35);
+  onNearMiss(pl: Player = this.sim.focus): void {
+    pl.stress.spike(0.35);
     this.sim.log('director', 'near miss');
   }
 
@@ -511,27 +541,32 @@ export class Director {
 
   /** Every real noise passes through here (for tell reads and stress). */
   onNoise(n: Noise): void {
-    if (n.source === 'player') this.adapt.notePlayerNoise(n.loudness, n.kind);
-    if (n.source === 'entity' && (n.playerLevel ?? 0) >= 6) this.lastEntityHeard = this.sim.time;
+    if (n.source === 'player' && (n.player ?? 0) === this.sim.focus.id) this.adapt.notePlayerNoise(n.loudness, n.kind);
+    if (n.source === 'entity') {
+      const levels = n.playerLevels ?? [n.playerLevel ?? 0];
+      levels.forEach((lv, id) => {
+        if (lv >= 6) this.lastEntityHeard.set(id, this.sim.time);
+      });
+    }
   }
 
-  onGasp(): void {
-    this.stress.spike(0.1);
+  onGasp(pl: Player = this.sim.focus): void {
+    pl.stress.spike(0.1);
   }
 
-  onFlashlight(on: boolean, faulted: boolean): void {
+  onFlashlight(on: boolean, faulted: boolean, pl: Player = this.sim.focus): void {
     if (faulted) return;
-    if (on) this.perception.noteAction('torch on');
+    if (on) pl.perception.noteAction('torch on');
     else if (this.adapt.encounter) this.adapt.addTactic('dark');
-    this.stress.spike(0.02);
+    pl.stress.spike(0.02);
   }
 
-  onHide(spot: HidingSpot, entering: boolean): void {
-    this.adapt.noteHide(entering);
+  onHide(spot: HidingSpot, entering: boolean, pl: Player = this.sim.focus): void {
+    if (pl === this.sim.focus) this.adapt.noteHide(entering);
     if (entering) {
       this.profile.hideCounts[spot.kind]++;
       this.sim.memory.data.hideKinds[spot.kind]++;
-      this.perception.noteAction('hid');
+      pl.perception.noteAction('hid');
     }
   }
 
@@ -545,9 +580,9 @@ export class Director {
     this.sim.journal('A door I always used is blocked now. Something put it there.');
   }
 
-  onThrow(): void {
+  onThrow(pl: Player = this.sim.focus): void {
     this.profile.throws++;
-    this.perception.noteAction('threw a bottle');
+    pl.perception.noteAction('threw a bottle');
   }
 
   onPickup(item: Item): void {
@@ -559,16 +594,16 @@ export class Director {
     if (note.falseLead) this.sim.log('U', `false lead read: "${note.title}"`);
   }
 
-  onFalseLeadAttempt(): void {
-    this.stress.spike(0.02);
+  onFalseLeadAttempt(pl: Player = this.sim.focus): void {
+    pl.stress.spike(0.02);
   }
 
   onExamine(prop: Prop): void {
     if (prop.kind === 'sign' || prop.kind === 'remains') this.sim.log('W', `you read the nest: ${prop.label}`);
   }
 
-  onFoundRemains(): void {
-    this.stress.spike(0.25);
+  onFoundRemains(pl: Player = this.sim.focus): void {
+    pl.stress.spike(0.25);
     this.sim.log('W', 'you found your own remains');
   }
 

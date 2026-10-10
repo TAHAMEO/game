@@ -136,7 +136,7 @@ export class World {
     return this.nextId++;
   }
 
-  private addItem(kind: ItemKind, cell: number, noteId?: number): Item {
+  addItem(kind: ItemKind, cell: number, noteId?: number): Item {
     const p = cellCenter(this.level, cell);
     const it: Item = { id: this.newId(), kind, pos: { ...p }, origin: { ...p }, state: 'ground', relocated: false };
     if (noteId !== undefined) it.noteId = noteId;

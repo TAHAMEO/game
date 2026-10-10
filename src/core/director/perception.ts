@@ -1,5 +1,6 @@
 import { cellAt, cellCenter, Tile } from '../level';
 import { angleDiff, angleTo, dist, type Vec2 } from '../math';
+import type { Player } from '../player';
 import type { Sim } from '../sim';
 import type { SoundKind } from '../types';
 
@@ -33,9 +34,10 @@ interface Signal {
 
 /**
  * S. UNRELIABLE SENSES — perceptual noise. Calm players perceive the world accurately;
- * as the live stress estimate rises, the player starts receiving false signals. Never a
- * jump scare: always peripheral, ambient, deniable. The Entity benefits from the
- * mistakes this causes without doing anything.
+ * as the live stress estimate rises, the player starts receiving false signals. Always
+ * peripheral, ambient, deniable. The Entity benefits from the mistakes this causes
+ * without doing anything. Each player has their own: in a shared run, what one of you
+ * sees at the edge of the torchlight, the others do not.
  */
 export class Perception {
   readonly phantoms: Phantom[] = [];
@@ -46,7 +48,10 @@ export class Perception {
   private nextAllowed = 20;
   private seq = 1;
 
-  constructor(private readonly sim: Sim) {}
+  constructor(
+    private readonly sim: Sim,
+    private readonly pl: Player,
+  ) {}
 
   /** Signals per second at a given stress. Zero below the calm threshold. */
   static rate(stress: number): number {
@@ -57,13 +62,13 @@ export class Perception {
 
   update(dt: number): void {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     const t = sim.time;
 
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
       if (t >= q.t) {
-        sim.emitPhantomSound(q.kind, q.pos, q.loud);
+        if (pl.active) sim.emitPhantomSound(q.kind, q.pos, q.loud, pl);
         this.queue.splice(i, 1);
       }
     }
@@ -72,12 +77,12 @@ export class Perception {
       const ph = this.phantoms[i]!;
       const off = Math.abs(angleDiff(pl.angle, angleTo(pl.pos, ph.pos)));
       const lit = pl.flashlight.on && off < BEAM_HALF && dist(pl.pos, ph.pos) < 12;
-      if (t >= ph.until || off < HALF_FOV * 0.45 || lit || !pl.alive) this.phantoms.splice(i, 1);
+      if (t >= ph.until || off < HALF_FOV * 0.45 || lit || !pl.active) this.phantoms.splice(i, 1);
     }
     this.watchReactions();
 
-    if (!sim.features.perceptualNoise || !pl.alive) return;
-    const stress = sim.director.stress.value;
+    if (!sim.features.perceptualNoise || !pl.active) return;
+    const stress = pl.stress.value;
     const lambda = Perception.rate(stress);
     if (lambda <= 0 || t < this.nextAllowed) return;
     if (sim.rng.next() < lambda * dt) {
@@ -87,7 +92,7 @@ export class Perception {
 
   private spawn(): boolean {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     const options: SignalKind[] = pl.hidden ? ['breath', 'steps', 'door'] : ['shape', 'shape', 'steps', 'steps', 'door'];
     for (let attempt = 0; attempt < 3; attempt++) {
       const kind = sim.rng.pick(options);
@@ -95,7 +100,8 @@ export class Perception {
       if (ok) {
         this.emitted++;
         sim.director.profile.ghostSignals++;
-        sim.log('S', `false ${kind} (stress ${sim.director.stress.value.toFixed(2)})`);
+        sim.log('S', `false ${kind}${sim.players.length > 1 ? ` for ${pl.shortName}` : ''} (stress ${pl.stress.value.toFixed(2)})`);
+        sim.scares.onFalseSignal(pl, kind, kind === 'shape' ? (this.phantoms[this.phantoms.length - 1] ?? null) : null);
         return true;
       }
     }
@@ -103,7 +109,7 @@ export class Perception {
   }
 
   private record(kind: SignalKind, pos: Vec2): void {
-    const pl = this.sim.player;
+    const pl = this.pl;
     this.signals.push({
       id: this.seq++,
       kind,
@@ -118,7 +124,7 @@ export class Perception {
   /** A shape at the edge of vision, in the dark, just outside the beam. */
   private spawnShape(): boolean {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     const ent = sim.entity;
     for (let i = 0; i < 14; i++) {
       const side = sim.rng.chance(0.5) ? 1 : -1;
@@ -141,7 +147,7 @@ export class Perception {
   /** Footsteps that weren't there — behind you, or just to the side. */
   private spawnSteps(): boolean {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     for (let i = 0; i < 12; i++) {
       const a = pl.angle + Math.PI + sim.rng.range(-1.4, 1.4);
       const d = sim.rng.range(5, 10);
@@ -165,7 +171,7 @@ export class Perception {
   /** A door sound from an empty hall — a door you can't see from here. */
   private spawnDoor(): boolean {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     const doors = sim.world.doors.filter((d) => {
       const p = cellCenter(sim.level, d.cell);
       const dd = dist(p, pl.pos);
@@ -174,7 +180,7 @@ export class Perception {
     if (!doors.length) return false;
     const door = sim.rng.pick(doors);
     const pos = cellCenter(sim.level, door.cell);
-    sim.emitPhantomSound('door', pos, 30);
+    sim.emitPhantomSound('door', pos, 30, pl);
     this.record('door', pos);
     return true;
   }
@@ -182,12 +188,12 @@ export class Perception {
   /** Breathing just outside your hiding place. */
   private spawnBreath(): boolean {
     const sim = this.sim;
-    const spot = sim.player.hidden;
+    const spot = this.pl.hidden;
     if (!spot) return false;
     const a = cellCenter(sim.level, spot.access);
     const pos = { x: a.x + sim.rng.range(-1.2, 1.2), y: a.y + sim.rng.range(-1.2, 1.2) };
     if (sim.world.isSolid(cellAt(sim.level, pos))) return false;
-    sim.emitPhantomSound('inhale', pos, 14);
+    sim.emitPhantomSound('inhale', pos, 14, this.pl);
     this.record('breath', pos);
     return true;
   }
@@ -195,7 +201,7 @@ export class Perception {
   /** Did you flinch? Hunting ghosts feeds the stress it came from. */
   private watchReactions(): void {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.pl;
     for (let i = this.signals.length - 1; i >= 0; i--) {
       const s = this.signals[i]!;
       const age = sim.time - s.t;
@@ -220,7 +226,7 @@ export class Perception {
     const sim = this.sim;
     s.reacted = true;
     sim.director.profile.ghostReactions++;
-    sim.director.stress.spike(0.08);
+    this.pl.stress.spike(0.08);
     sim.log('S', `you reacted to a false ${s.kind} (${what})`);
   }
 }
@@ -252,7 +258,7 @@ export class FlashlightTax {
     const t = sim.time;
     const reliance = sim.director.profile.flashlightReliance;
     const learned = sim.memory.learned('beam');
-    const pl = sim.player;
+    const pl = sim.focus;
     switch (this.phase) {
       case 'none':
         if (reliance > 0.55) {

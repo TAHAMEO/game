@@ -1,6 +1,7 @@
 import type { Entity, Tell, TellKind } from '../entity';
 import { angleDiff, angleTo, dist } from '../math';
 import type { TellKindKey } from '../persistence';
+import type { Player } from '../player';
 import type { Sim } from '../sim';
 import type { HidingSpot } from '../types';
 import { BEAM_HALF, VIEW_FOV } from './perception';
@@ -24,6 +25,8 @@ interface Encounter {
   start: number;
   lastThreat: number;
   tactics: Set<string>;
+  /** Players already dead when it began. */
+  deaths: number;
 }
 
 export interface FakeContext {
@@ -69,7 +72,7 @@ export class Adaptation {
   onTell(tell: Tell, audibleLevel: number): void {
     if (tell.kind === 'snap') return;
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     if (tell.fake) this.fakesShown++;
     this.records.push({
       tell,
@@ -87,11 +90,11 @@ export class Adaptation {
     });
   }
 
-  /** Can the player see the Entity right now? Used for tell perception. */
-  playerSeesEntity(): boolean {
+  /** Can a player see the Entity right now? Used for tell perception (and fear). */
+  playerSeesEntity(pl: Player = this.sim.focus): boolean {
     const sim = this.sim;
-    const pl = sim.player;
     const ent = sim.entity;
+    if (!pl.active) return false;
     const d = dist(pl.pos, ent.pos);
     if (d > 15) return false;
     const off = Math.abs(angleDiff(pl.angle, angleTo(pl.pos, ent.pos)));
@@ -116,7 +119,7 @@ export class Adaptation {
 
   private updateTells(): void {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     const sees = this.records.length ? this.playerSeesEntity() : false;
     for (let i = this.records.length - 1; i >= 0; i--) {
       const r = this.records[i]!;
@@ -135,7 +138,7 @@ export class Adaptation {
     const sim = this.sim;
     if (!r.perceived || r.tell.kind === 'snap') return;
     const kind = r.tell.kind as TellKindKey;
-    const pl = sim.player;
+    const pl = sim.focus;
     let read: boolean;
     switch (kind) {
       case 'tilt':
@@ -177,7 +180,7 @@ export class Adaptation {
     const sim = this.sim;
     if (!sim.features.fakedTells || kind === 'snap') return false;
     if (!sim.memory.learned(`fake:${kind}`)) return false;
-    const pl = sim.player;
+    const pl = sim.focus;
     const d = dist(pl.pos, ctx.entity.pos);
     if (kind === 'tilt' && (d > 9 || d < 2.5)) return false;
     if (kind === 'turn' && d > 12) return false;
@@ -199,21 +202,26 @@ export class Adaptation {
   private updateEncounter(): void {
     const sim = this.sim;
     const ent = sim.entity;
-    const pl = sim.player;
     const k = ent.stateKind;
-    const d = dist(ent.pos, pl.pos);
-    const threat = k === 'chase' || k === 'lunge' || (ent.threatening && d < 9) || (k === 'feint' && d < 12);
-    if (threat && pl.alive) {
+    const players = sim.players.filter((p) => p.active);
+    // An encounter is anyone's: it runs while it threatens any of you.
+    const threat = players.some((pl) => {
+      const d = dist(ent.pos, pl.pos);
+      return k === 'chase' || k === 'lunge' || (ent.threatening && d < 9) || (k === 'feint' && d < 12);
+    });
+    if (threat) {
       if (!this.encounter) {
-        this.encounter = { start: sim.time, lastThreat: sim.time, tactics: new Set() };
+        this.encounter = { start: sim.time, lastThreat: sim.time, tactics: new Set(), deaths: sim.players.filter((p) => !p.alive).length };
         sim.log('Y', 'encounter begins');
       }
       this.encounter.lastThreat = sim.time;
     }
     const e = this.encounter;
     if (!e) return;
-    if (pl.hidden) e.tactics.add(`hide:${pl.hidden.kind}`);
-    if (!pl.alive) {
+    for (const pl of players) if (pl.hidden) e.tactics.add(`hide:${pl.hidden.kind}`);
+    // A death ends it: nobody escaped this one.
+    const dead = sim.players.filter((p) => !p.alive).length;
+    if (!players.length || dead > e.deaths) {
       this.encounter = null;
       return;
     }
@@ -263,7 +271,7 @@ export class Adaptation {
     const ent = sim.entity;
     const active = ent.stateKind !== 'rest' && ent.stateKind !== 'retreat' && ent.stateKind !== 'feed';
     const progressing = sim.time - sim.director.profile.lastProgressT < 120 || this.escapes > 0;
-    if (sim.director.stress.value < 0.3 && active && progressing && sim.player.alive) this.comfort += dt;
+    if (sim.director.stress.value < 0.3 && active && progressing && sim.focus.active) this.comfort += dt;
     else this.comfort = Math.max(0, this.comfort - dt * 0.5);
     if (this.comfort > 45) this.shift();
   }

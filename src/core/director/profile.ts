@@ -26,8 +26,8 @@ export class Profile {
 
   update(dt: number): void {
     const sim = this.sim;
-    const pl = sim.player;
-    if (!pl.alive) return;
+    const pl = sim.focus;
+    if (!pl.active) return;
     const lum = sim.world.lighting.sample(pl.pos);
     if (lum < 0.18 && !pl.hidden) {
       this.flashlightReliance = ewma(this.flashlightReliance, pl.flashlight.on ? 1 : 0, dt, 90);
