@@ -56,7 +56,8 @@ audio.tts = settings.tts;
 audio.setVolume(settings.volume);
 const input = new InputController(canvas);
 input.sensitivity = 0.0024 * settings.sensitivity;
-const hud = new Hud(document.querySelector('#hud')!);
+const hudRoot = document.querySelector<HTMLElement>('#hud')!;
+const hud = new Hud(hudRoot);
 
 const params = new URLSearchParams(location.search);
 const features: Features = { ...PRESETS[settings.preset] };
@@ -300,6 +301,8 @@ function frame(now: number): void {
     sim.player.angle += dt * 0.05;
   }
   renderer.render(sim, now / 1000);
+  // Pockets and prompts belong to a life in progress, not to the title or the end card.
+  hudRoot.hidden = screen === 'title' || screen === 'over';
   hud.update(sim, dt);
   if (screen === 'playing') audio.update(sim, dt);
   designer.update(dt);
