@@ -147,6 +147,41 @@ describe('T. The bait economy', () => {
     expect(b.entity.stateKind).toBe('plan');
   });
 
+  it('a head-tilt pauses a plan: it goes back to it, and the plan is reported once', () => {
+    const sim = makeSim({ seed: 3, tier: 0, features: { survivors: false } });
+    controlled(sim, cell(sim, 31, 18));
+    placePlayer(sim, 31, 24);
+    sim.player.update = () => {};
+    sim.entity.pos = { x: 31.5, y: 18.5 };
+    const plan: Plan = { id: 999, kind: 'offer', section: 'T', steps: [{ op: 'wait', duration: 6 }], reason: 'paused plan', created: 0 };
+    run(sim, plan);
+    step(sim, 1);
+    sim.emitNoise('step', sim.entity.pos, sim.entity.hearingThreshold() + 3, 'player');
+    let listened = false;
+    for (let i = 0; i < 12 * 60; i++) {
+      step(sim, 1 / 60);
+      if (sim.entity.stateKind === 'listen') {
+        listened = true;
+        expect(sim.director.bait.active).toBe(plan);
+      }
+    }
+    expect(listened).toBe(true);
+    expect(sim.director.bait.history.filter((h) => h.reason === 'paused plan').map((h) => h.outcome)).toEqual(['done']);
+  });
+
+  it('a plan cut short by a new one is reported once', () => {
+    const sim = makeSim({ seed: 3, tier: 0, features: { survivors: false } });
+    controlled(sim, cell(sim, 31, 18));
+    placePlayer(sim, 31, 24);
+    const first: Plan = { id: 1001, kind: 'offer', section: 'T', steps: [{ op: 'wait', duration: 30 }], reason: 'first plan', created: 0 };
+    const second: Plan = { id: 1002, kind: 'herd', section: 'T', steps: [{ op: 'wait', duration: 30 }], reason: 'second plan', created: 0 };
+    run(sim, first);
+    step(sim, 1);
+    sim.director.bait.interject(second);
+    expect(sim.director.bait.history.filter((h) => h.reason === 'first plan').map((h) => h.outcome)).toEqual(['interrupted']);
+    expect(sim.director.bait.active).toBe(second);
+  });
+
   it('logs every plan it tries, for the designer', () => {
     const sim = makeSim({ seed: 25, tier: 3 });
     placePlayer(sim, 31, 25);

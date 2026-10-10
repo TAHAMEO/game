@@ -175,7 +175,8 @@ export class BaitPlanner {
     const sim = this.sim;
     const k = sim.entity.stateKind;
     if (k === 'chase' || k === 'lunge' || k === 'kill') return;
-    if (this.active) sim.director.onPlanFinished(this.active, 'interrupted');
+    // A plan the Entity is running is reported when startPlan pulls it off; only a stale one is reported here.
+    if (this.active && this.active !== sim.entity.activePlan) sim.director.onPlanFinished(this.active, 'interrupted');
     this.active = plan;
     sim.log(plan.section, `plan: ${plan.kind} — ${plan.reason}`);
     sim.entity.startPlan(plan);

@@ -148,12 +148,15 @@ export class Entity {
   private setState(s: EntityState, reason: string): void {
     const prevState = this.state;
     const prev = prevState.kind;
-    if (prevState.kind === 'plan' && prevState !== s && !this.closingPlan) {
+    // A head-tilt only pauses a plan: it ends when it does not go back to it.
+    const leaving = prevState.kind === 'plan' ? prevState : prevState.kind === 'listen' && prevState.resume.kind === 'plan' ? prevState.resume : null;
+    const pausing = s.kind === 'listen' && s.resume === leaving;
+    if (leaving && leaving !== s && !pausing && !this.closingPlan) {
       // Perception pulled it off the plan: whatever it was carrying hits the floor.
       this.dropCarried();
-      const step = prevState.plan.steps[prevState.step];
-      const sprung = step?.op === 'ambush' && prevState.arrived && (s.kind === 'chase' || s.kind === 'investigate' || s.kind === 'lunge');
-      this.sim.director.onPlanFinished(prevState.plan, s.kind === 'mimic' ? 'done' : sprung ? 'sprung' : 'interrupted');
+      const step = leaving.plan.steps[leaving.step];
+      const sprung = step?.op === 'ambush' && leaving.arrived && (s.kind === 'chase' || s.kind === 'investigate' || s.kind === 'lunge');
+      this.sim.director.onPlanFinished(leaving.plan, s.kind === 'mimic' ? 'done' : sprung ? 'sprung' : 'interrupted');
     }
     this.state = s;
     this.stateT = 0;
@@ -576,6 +579,14 @@ export class Entity {
     this.startTell('turn', 1.4, fake);
   }
 
+  /** The plan it is carrying out, or has paused to listen. */
+  get activePlan(): Plan | null {
+    const s = this.state;
+    if (s.kind === 'plan') return s.plan;
+    if (s.kind === 'listen' && s.resume.kind === 'plan') return s.resume.plan;
+    return null;
+  }
+
   startPlan(plan: Plan): void {
     this.setState({ kind: 'plan', plan, step: 0, t: 0, arrived: false }, `[${plan.section}] ${plan.reason}`);
   }
@@ -618,11 +629,7 @@ export class Entity {
         if (sim.time >= s.until) {
           const resume = s.resume;
           if (resume.kind === 'listen' || resume.kind === 'check' || resume.kind === 'lunge' || resume.kind === 'kill') this.idleNext('heard nothing more');
-          else {
-            this.state = resume;
-            this.stateT = 0;
-            this.nav.goal = -1;
-          }
+          else this.setState(resume, resume.kind === 'plan' ? `[${resume.plan.section}] ${resume.plan.reason}` : `heard nothing more; back to ${resume.kind}`);
         }
         break;
       case 'investigate':
