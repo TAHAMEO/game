@@ -81,6 +81,10 @@ function inviteLink(code: string, via: Via): string | null {
 
 export async function openFriends(h: FriendsHost): Promise<void> {
   h.setScreen();
+  if (__ARTIFACT__) {
+    sandboxed(h);
+    return;
+  }
   if (current) {
     if (current.kind === 'host') hostLobby(h, current.net, current.via);
     else guestLobby(h, current.net);
@@ -176,6 +180,26 @@ export async function openFriends(h: FriendsHost): Promise<void> {
     if (e.key === 'Enter') join();
   });
   if (code) codeIn.focus();
+}
+
+/** The published page cannot reach other computers: say so, and where shared runs work. */
+function sandboxed(h: FriendsHost): void {
+  const repo = 'https://github.com/TAHAMEO/game';
+  h.show(
+    `
+    <h2>Play with friends</h2>
+    <p class="lede">Shared runs don't work on this page. It runs in a sealed frame that can't connect to other computers.</p>
+    <p>They work in the full game. Each of you runs it on your own computer:</p>
+    <ol class="steps">
+      <li>Get the code from <a href="${repo}" target="_blank" rel="noopener">github.com/TAHAMEO/game</a>.</li>
+      <li>In that folder, run <code>npm install</code>, then <code>npm run dev</code>, and open the address it prints.</li>
+      <li>One of you chooses <b>Play with friends</b>, then <b>Host a game</b>, and reads out the room code. The others type it in and choose <b>Join</b>.</li>
+    </ol>
+    <p class="fine">All on one home network? One person runs <code>npm run build</code> and then <code>npm run server</code>; everyone else opens the address it prints.</p>
+    <nav class="menu"><button class="go" data-back>Back</button></nav>`,
+    'wide friends',
+  );
+  h.on('[data-back]', () => h.back());
 }
 
 // ====================================================================== hosting

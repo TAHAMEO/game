@@ -1078,3 +1078,26 @@ button.go {
 #net-status[hidden] {
   display: none;
 }
+
+.friends .steps {
+  max-width: 560px;
+  margin: 12px auto;
+  padding-left: 1.4em;
+  text-align: left;
+  line-height: 1.6;
+}
+
+.friends .steps li + li {
+  margin-top: 8px;
+}
+
+.friends a {
+  color: var(--accent);
+}
+
+.friends code {
+  font: 13px var(--type);
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+}

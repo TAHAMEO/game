@@ -15,7 +15,8 @@
     "soak": "vitest run tests/soak.test.ts",
     "campaign": "CAMPAIGN=1 vitest run --silent=false --reporter=verbose",
     "smoke": "node scripts/smoke.mjs",
-    "server": "node server/relay.mjs"
+    "server": "node server/relay.mjs",
+    "build:artifact": "tsc --noEmit && vite build --mode artifact && node scripts/artifact.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
