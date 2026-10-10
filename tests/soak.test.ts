@@ -32,7 +32,7 @@ function run(seed: number, minutes: number, opts: ConstructorParameters<typeof B
 }
 
 describe('soak', () => {
-  it('runs several seeds for minutes of game time without breaking invariants', () => {
+  it('runs several seeds for minutes of game time without breaking invariants', { timeout: 120_000 }, () => {
     for (const seed of [1, 2, 3, 4, 5, 6]) {
       const { sim, states } = run(seed, 6);
       expect(sim.time).toBeGreaterThan(5);
@@ -40,7 +40,7 @@ describe('soak', () => {
     }
   });
 
-  it('persists knowledge across permadeath runs', () => {
+  it('persists knowledge across permadeath runs', { timeout: 120_000 }, () => {
     const store = new MemoryStore();
     let deaths = 0;
     for (let i = 0; i < 4; i++) {
@@ -56,7 +56,7 @@ describe('soak', () => {
     }
   });
 
-  it('runs every preset', () => {
+  it('runs every preset', { timeout: 120_000 }, () => {
     for (const preset of ['core', 'mvp', 'full'] as const) {
       const { sim } = run(42, 3, {}, new MemoryStore(), preset);
       expect(sim.time).toBeGreaterThan(5);

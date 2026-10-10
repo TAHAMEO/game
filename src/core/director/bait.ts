@@ -186,16 +186,18 @@ export class BaitPlanner {
     const sim = this.sim;
     const route = this.predictedRoute();
     if (!route || route.length < 6) return null;
-    const ahead = route.slice(3, 26);
+    const ahead = route.slice(3, 30);
     const scored: { spot: HidingSpot; d: number }[] = [];
     for (const spot of sim.world.spots) {
       if (spot.occupant || spot.body || spot.baited) continue;
-      if (spot.kind === 'bed' ? !spot.cluttered : spot.ajar) continue;
+      if (spot.kind !== 'bed' && spot.ajar) continue;
       const a = cellCenter(sim.level, spot.access);
       let md = Infinity;
       for (const c of ahead) md = Math.min(md, dist(a, cellCenter(sim.level, c)));
-      if (md > 2.5 || this.visibleToPlayer(a)) continue;
-      scored.push({ spot, d: md + sim.rng.range(0, 1) });
+      if (md > 4 || this.visibleToPlayer(a)) continue;
+      // A cluttered bed made clear is the most inviting change; an already-clear one still works.
+      const appeal = spot.kind === 'bed' && !spot.cluttered ? 1.5 : 0;
+      scored.push({ spot, d: md + appeal + sim.rng.range(0, 1) });
     }
     scored.sort((x, y) => x.d - y.d);
     for (const { spot } of scored.slice(0, 4)) {
@@ -246,12 +248,18 @@ export class BaitPlanner {
     if (!route2) return null;
     const overlap = route2.filter((c) => avoid.has(c)).length / route2.length;
     if (overlap > 0.6) return null;
-    const regions2 = new Set(route2.map((c) => level.regionOf[c]!));
+    // Lights that serve route 1 but not route 2 (by distance, not by region: one long
+    // hall can serve both routes at different ends).
+    const near = (route: number[], p: Vec2) => {
+      let md = Infinity;
+      for (const c of route) md = Math.min(md, dist(cellCenter(level, c), p));
+      return md;
+    };
     const kill = new Set<number>();
-    for (const c of route1) {
-      const r = level.regionOf[c]!;
-      if (r < 0 || regions2.has(r)) continue;
-      for (const fx of world.lighting.fixturesInRegion(r)) if (world.lighting.isOn(fx)) kill.add(fx.id);
+    for (const fx of world.lighting.fixtures) {
+      if (!world.lighting.isOn(fx)) continue;
+      const p = cellCenter(level, fx.cell);
+      if (near(route1, p) <= 2.5 && near(route2, p) > 4) kill.add(fx.id);
     }
     if (!kill.size) return null;
     const lit2 = route2.reduce((a, c) => a + world.lighting.lumAt(c), 0) / route2.length;

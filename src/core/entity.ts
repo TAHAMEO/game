@@ -211,7 +211,7 @@ export class Entity {
         if (m.t <= this.trailT) continue;
         if (World.heatOf(m, sim.time) < 0.18) continue;
         if (dist(this.pos, m.pos) > 7) continue;
-        if (!this.seesPoint(m.pos, Math.PI * 2)) continue;
+        if (!this.seesSurface(m.cell, m.pos)) continue;
         if (!best || m.t > best.t) best = m;
       }
       p.thermal = best;
@@ -260,6 +260,28 @@ export class Entity {
     if (k === 'hunt' || k === 'chase' || k === 'investigate' || k === 'check' || k === 'ambush' || k === 'mimic') return E.fovHunt;
     if (k === 'rest' || k === 'feed') return E.fovRoam * 0.6;
     return E.fovRoam;
+  }
+
+  /**
+   * Prints sit on doors and locker latches — opaque cells. It sees the *face* of the
+   * surface: a point just in front of it, on its own side.
+   */
+  seesSurface(cell: number, pt: Vec2): boolean {
+    const { level, world } = this.sim;
+    let face = pt;
+    const door = world.doorAt.get(cell);
+    const wo = level.wallObjectAt.get(cell);
+    const toward = (side: number) => {
+      const c = cellCenter(level, cell);
+      const s = cellCenter(level, side);
+      return { x: c.x + (s.x - c.x) * 0.55, y: c.y + (s.y - c.y) * 0.55 };
+    };
+    if (door) {
+      const [a, b] = door.sides;
+      face = toward(dist(cellCenter(level, a), this.pos) <= dist(cellCenter(level, b), this.pos) ? a : b);
+    } else if (wo) face = toward(wo.access);
+    if (dist(this.pos, face) < 0.3) return true;
+    return world.los(this.pos, face);
   }
 
   seesPoint(pt: Vec2, fov: number): boolean {
