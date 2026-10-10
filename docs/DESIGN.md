@@ -226,3 +226,142 @@ report prints survival time, the debt reached, time chased, escapes, false signa
 from that loop. People will play differently: start with `TUNING` in `src/core/config.ts`, the
 Director's leash and relax curves (`director/director.ts`), and the tier thresholds
 (`persistence.ts`).
+
+---
+
+# Part 3 — Seen, heard, told, and shared
+
+The brief's systems were first shown through a low-resolution raycaster with simple sound. This part
+puts them in HD 3D with full 3D sound, adds a story and Director-staged jump scares, and lets up to
+four people play the same run. With the story and scares switched off, a solo run with a given seed
+plays out exactly as it did before this part (the system tests for S–Z run that way, unchanged). The
+story never touches the Entity's senses or the Director; scares reach them only through your stress,
+like any false signal, and through the one real noise of a falling ceiling tile.
+
+## Shared runs in the simulation
+
+- `Sim` holds one to four players (`config.players`). Every sense the Entity has samples every player
+  and attends to the one it perceives best; a noise is propagated once and heard by each player at
+  its own level and apparent direction.
+- **The Director reads one person at a time** — the `focus`: whoever the Entity is engaged with, or
+  else (re-chosen every 18–30 s) whoever has strayed from the others, then whoever is most afraid. It
+  picks off the one who wanders alone.
+- Each player has their own stress and their own **perception (S)**: phantoms are per head, and the
+  events that carry them are addressed (`to`) to that player only.
+- Fuses and keys belong to everyone; batteries and bottles are personal. A dead or escaped player
+  watches whoever is still inside; the run ends when nobody is.
+- Group decisions use their own random streams, so adding players never reshuffles what a solo run
+  rolls.
+
+## The story
+
+The premise (in `storyText.ts`): in 1976 Dr. Elias Hale opened the Quiet Ward — the Silence Protocol,
+isolation in an anechoic room for patients who heard voices. Patient 4, Ada Wren, nine, said she did
+not hear a voice; she heard something *listening*. During her thirty-first session in 1979 a storm
+took the power; the room's magnetic door would not open for forty-one hours. The room was empty.
+Tonight the storm is back. You are on the night shift and you do not remember coming in. Every life
+is somebody new, and the notebook fills with handwriting that is almost yours.
+
+It is delivered without cutscenes, through the systems already there:
+
+| Piece | How it works |
+|---|---|
+| **Case file** (12 pages) | Two pages per run (three in a shared run) lie on free item/note spots. Found pages stay found across every death and are readable in the notebook. Your name appears in the later ones. |
+| **Visions** (9) | The first time you enter certain zones (some only once, some recurring, several unlocked by pages read), the screen goes sepia and overexposed and a remembered scene plays in a few lines. Never during a chase. |
+| **Whispers** (12) | When it has been quiet too long, a word for one player only — more often as the debt rises. |
+| **Wall writing** (13) | Words on the walls, more of them as you learn more. One wall of the nest lists the names of everyone it has taken. |
+| **Intro and endings** | The intro changes with how many people have gone in and how much of the file you have. Endings depend on how you left and what you know; all twelve pages and an escape open the true ending. |
+
+The story has its own random stream and never touches the Entity's senses or the Director's
+pacing: it is what the building remembers, not what it does.
+
+## Jump scares
+
+`scares.ts`. A scare is a promise the game should keep rarely:
+
+- None in the first 75 s. After that the Director rolls once a second, more likely the more afraid you
+  are and the deeper the debt, less likely in a relax phase, and never during a real chase (a real
+  chase needs no help). Each player then waits 95–170 s (45–80 s on *intense*) before the next.
+- **Kinds:** the torch *flickers* and in the dark frame it is standing right there; *footsteps behind
+  you* — turn around within a few seconds and it is in your face; a *face at the window* with a
+  lightning flash; a ceiling tile *drops* (the one real scare: the thud is a real noise the Entity
+  hears too, and the tile stays on the floor); while you hide, something *inhales* outside the
+  locker; a *whisper*. The real lunge and kill get the same treatment (flash, shake, a stinger).
+- Except the drop, scares are presentation only and feed your stress like any other false signal;
+  they cannot hurt you. *Off / normal / intense* is an option, and the host's choice in a shared run.
+
+## The picture
+
+`src/render3d`. The renderer reads the simulation every frame and never writes to it.
+
+- **Materials** are generated on the GPU at load from procedural recipes (plaster, tile, terrazzo,
+  brick, concrete, metal, wood, fabric, skin, the Entity's corpse-skin, the nest's growth…): albedo,
+  height-derived normals, roughness, metalness and AO in one multi-render-target pass per recipe.
+- **The building's light is the simulation's light.** The per-cell light the Entity uses to see
+  you (with line of sight to every fixture, flicker and failures) is uploaded each frame and lit into
+  every material as a soft fill plus a pseudo-directional light toward the brightest neighbour, so
+  normal maps and highlights read. What is dark in the game is dark on screen.
+- **The torch** is a shadow-casting spotlight with a lens cookie (hot centre, reflector ring, soft
+  spill), a faint volumetric cone that stops at the first wall, dust motes sized like real motes
+  through a lens, and a faint bounce light from whatever the beam is on. It sits in your hand, right of
+  and below the eye, and lags the view slightly.
+- **Characters** are procedural rigs with eased joints: the Entity (an ear-dish head, a mouth at its
+  centre), survivors, other players carrying their own torches, and bodies.
+- **Outside:** a storm sky, rain that only falls where there is sky, lightning that lights every cell
+  that can see the sky.
+- **Post:** ambient occlusion (from solid things only), bloom, ACES tone mapping, then the horror
+  grade — drained colour, cold shadows, vignette, grain, chromatic aberration — and the effects of
+  fear and harm: the scare flash, the hurt edge, the vision's sepia, the tunnel of a held breath, the
+  red fade of death.
+- Quality presets scale texture size, shadow resolution and effects; dynamic resolution trades pixels
+  (never effects) to hold ~20 ms frames. Without WebGL2 the original raycaster takes over.
+
+## The sound
+
+`src/audio`. No samples: every sound is synthesised from noise, partials, formants and grains, so
+phantom sounds are, by construction, the same recipes as real ones.
+
+- Sounds are placed with HRTF at the direction the simulation says they **arrive** from (round a
+  corner, from the doorway), low-passed when the path is bent or blocked, and sent into a convolution
+  reverb built for the kind of space you are standing in (tiled washroom, long corridor, small office,
+  stairwell, outdoors, the inside of a locker…), crossfaded as you move.
+- **Ambience:** room tone, rain on the roof and against the windows, wind, fluorescent buzz and air
+  in the ducts once the power is back, drips in the cold, the building settling, distant pipes and
+  doors — and, very rarely, a music box or a child humming.
+- **Score:** never a tune. A drone that thickens with the debt and with fear, string clusters when
+  you see or hear it (or think you do), a running pulse and stabs in a chase, and silence after every
+  scare, because silence is the loudest thing in the building.
+- **You:** footsteps by surface, breath that follows exertion, holding your breath and the gasp, and
+  a heartbeat that rises with fear.
+- Levels were measured in the browser (`AudioEngine.meter`): calm music and ambience both sit around
+  −34 dBFS, your own footsteps peak around −22, thunder and scares around −12, with a limiter at −10.
+
+## Shared runs over the network
+
+`src/net`. One player hosts and runs the only real simulation; guests send input and receive what
+happened.
+
+- **Why not lockstep?** Running identical simulations everywhere and exchanging inputs would be
+  lighter, but browsers do not agree on the last bit of `Math.sin` and friends, and a simulation this
+  chaotic would drift apart within minutes.
+- **The copy.** A guest builds the same run from the same seed and the same save the host's copy
+  started from (taken before the host's copy wrote to it), so the building, the items, the names and
+  the case-file pages match from the first step. After that the host sends **20 snapshots a second**,
+  each containing only the rows that changed since that guest's last one (transports are reliable and
+  in order). Positions and headings travel complete in every snapshot. About 14 KB/s down and 2 KB/s
+  up per guest.
+- **Smoothness.** A guest shows the run 0.1 s in the past and interpolates everything that moves
+  between snapshots; events (sounds, scares, subtitles) are released with their snapshot so sound and
+  picture stay together.
+- **Your own body** cannot wait for a round trip. Movement is predicted with the simulation's own
+  rules (`moveBody`, shared with `Player`) and reconciled against the host's acknowledged input:
+  replay what the host has not played yet, and slide out small disagreements rather than snap. Looking
+  around is exact — a backlog of input is folded together, never dropped — and the torch answers at
+  once.
+- **Failures.** A guest who goes silent keeps walking for half a second (a hiccup) and then stands
+  still; one whose connection drops is lost in the building (their character dies). A host whose tab
+  is hidden keeps the run stepping on a worker timer. Different versions of the game refuse to join.
+- **Transports:** WebRTC data channels through PeerJS (the room code is the host's address on the
+  public PeerJS server, whose TURN relays carry the game when a network forbids a direct line), or a
+  WebSocket relay (`npm run server`) that also serves the game and is picked automatically by pages it
+  serves.

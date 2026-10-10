@@ -1,4 +1,4 @@
-import { defaultConfig, PRESETS, type Features } from '../src/core/config';
+import { defaultConfig, PRESETS, type Features, type ScareLevel } from '../src/core/config';
 import { idleInput, type InputState } from '../src/core/input';
 import { MemoryStore } from '../src/core/persistence';
 import { Sim } from '../src/core/sim';
@@ -11,12 +11,20 @@ export interface MakeOpts {
   features?: Partial<Features>;
   tier?: number | null;
   store?: MemoryStore;
+  /** How many people go in (default 1). */
+  players?: number;
+  /** The system tests for S–Z run without staged scares or the story layer unless asked. */
+  scares?: ScareLevel;
+  story?: boolean;
 }
 
 export function makeSim(opts: MakeOpts = {}): Sim {
   const cfg = defaultConfig(opts.seed ?? 1);
   cfg.features = { ...PRESETS.full, ...(opts.features ?? {}) };
   cfg.tierOverride = opts.tier ?? null;
+  cfg.players = opts.players ?? 1;
+  cfg.scares = opts.scares ?? 'off';
+  cfg.story = opts.story ?? false;
   return new Sim(cfg, opts.store ?? new MemoryStore());
 }
 

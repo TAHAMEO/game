@@ -1,7 +1,9 @@
 import { TUNING } from './config';
+import { Perception } from './director/perception';
+import { StressModel } from './director/stress';
 import { LOCK_LABELS } from './hospital';
 import type { InputState } from './input';
-import { cellAt, cellCenter, isStaticOpaque, Tile } from './level';
+import { cellAt, cellCenter, isStaticOpaque, Tile, type Level } from './level';
 import { angleDiff, angleTo, approach, clamp01, dist, lerp, wrapAngle, type Vec2 } from './math';
 import type { Sim } from './sim';
 import type { DoorState, Gate, HidingSpot, Item, Prop, Tap } from './types';
@@ -33,9 +35,22 @@ interface Channel {
 const P = TUNING.player;
 const L = TUNING.loudness;
 
+/** How far you can look up or down (radians). */
+export const PITCH_LIMIT = 1.3;
+
+export interface Inventory {
+  /** Fuses and keys are carried for the whole group: anyone can use them at the breaker or a door. */
+  fuses: number;
+  keys: Set<string>;
+  batteries: number;
+  bottles: number;
+}
+
 export class Player {
   pos: Vec2;
   angle: number;
+  /** Vertical look, radians (positive = up). It aims the torch, too. */
+  pitch = 0;
   vel: Vec2 = { x: 0, y: 0 };
   /** Actual speed this step, cells/s. */
   speed = 0;
@@ -48,6 +63,8 @@ export class Player {
   /** 0..1 panting after exertion. */
   exertion = 0;
   alive = true;
+  /** Got out through the gate. Escaped players watch the others, like the dead do. */
+  escaped = false;
   wounded = false;
   deathCause = '';
   hidden: HidingSpot | null = null;
@@ -57,22 +74,70 @@ export class Player {
   readonly breath = { holding: false, held: 0, next: 2, recover: 0 };
   /** You start with the torch lit: the brightest thing in the building, and the first habit it will tax [S]. */
   readonly flashlight = { on: true, battery: 1, faultUntil: 0 };
-  readonly inv = { fuses: 0, keys: new Set<string>(), batteries: 0, bottles: 1 };
+  readonly inv: Inventory;
+  /** Your own fear, as the Director reads it [S]. Never shown. */
+  readonly stress = new StressModel();
+  /** What your panic shows you and nobody else [S]. */
+  readonly perception: Perception;
   /** Scent mark [V]. */
   markedUntil = 0;
   channel: Channel | null = null;
   focus: Focus | null = null;
   readingNote: number | null = null;
-  private readingAt: Vec2 = { x: 0, y: 0 };
+  /** A case-file page in your hands [story]. */
+  readingRecord: number | null = null;
+  readingAt: Vec2 = { x: 0, y: 0 };
   bob = 0;
   eye = 0.5;
   lastHurt = -99;
   private stepAccum = 0;
 
-  constructor(private readonly sim: Sim, readonly name: string) {
+  constructor(
+    private readonly sim: Sim,
+    readonly name: string,
+    readonly id = 0,
+  ) {
     const level = sim.level;
     this.pos = cellCenter(level, level.spawn);
     this.angle = -Math.PI / 2;
+    if (id > 0) {
+      // Everyone comes in through reception, shoulder to shoulder.
+      const offs = [
+        { x: 0.6, y: 0.3 },
+        { x: -0.6, y: 0.3 },
+        { x: 0, y: 0.75 },
+      ];
+      const o = offs[(id - 1) % offs.length]!;
+      const p = { x: this.pos.x + o.x, y: this.pos.y + o.y };
+      if (!sim.world.isSolid(cellAt(level, p))) this.pos = p;
+    }
+    const team = sim.team;
+    this.inv = {
+      get fuses() {
+        return team.fuses;
+      },
+      set fuses(v: number) {
+        team.fuses = v;
+      },
+      keys: team.keys,
+      batteries: 0,
+      bottles: 1,
+    };
+    this.perception = new Perception(sim, this);
+  }
+
+  /** Still in the building and alive: someone the Entity can hunt. */
+  get active(): boolean {
+    return this.alive && !this.escaped;
+  }
+
+  /** First name, for the people who shout it. */
+  get shortName(): string {
+    return this.name.split(' ').pop() ?? this.name;
+  }
+
+  private note(text: string, duration?: number): void {
+    this.sim.notice(text, duration, this.id);
   }
 
   get cell(): number {
@@ -98,12 +163,15 @@ export class Player {
   }
 
   update(dt: number, input: InputState): void {
-    if (!this.alive) return;
+    if (!this.active) return;
     // Reading holds your eyes, not your feet: walking off, hiding or starting a job puts it down.
-    if (this.readingNote !== null && (this.hidden || this.transition || this.channel || dist(this.pos, this.readingAt) > 0.5)) {
+    if ((this.readingNote !== null || this.readingRecord !== null) && (this.hidden || this.transition || this.channel || dist(this.pos, this.readingAt) > 0.5)) {
       this.readingNote = null;
+      this.readingRecord = null;
     }
     this.turnRate = Math.abs(input.turn) / Math.max(dt, 1e-4);
+    const pitchLimit = this.hidden ? 0.55 : PITCH_LIMIT;
+    this.pitch = Math.max(-pitchLimit, Math.min(pitchLimit, this.pitch + (input.pitch ?? 0)));
 
     if (input.flashlightPressed) this.toggleFlashlight();
     this.updateFlashlight(dt);
@@ -135,7 +203,7 @@ export class Player {
       this.updateChannel(dt, input);
     } else {
       this.updateMovement(dt, input);
-      this.updateFocus();
+      this.refreshFocus();
       if (input.interactPressed && this.focus) this.interact(this.focus);
     }
     if (input.throwPressed) this.throwBottle();
@@ -145,67 +213,14 @@ export class Player {
 
   private updateMovement(dt: number, input: InputState): void {
     const sim = this.sim;
-    if (this.stamina <= 0.01) this.exhausted = true;
-    if (this.exhausted && this.stamina > 0.35) this.exhausted = false;
-    const moving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
-    this.sprinting = input.sprint && input.forward > 0.1 && !this.crouching && !this.exhausted && moving;
-    let speed = this.crouching ? P.crouchSpeed : this.sprinting ? P.sprintSpeed : P.walkSpeed;
-    if (this.wounded) speed *= 0.95;
-    const f = this.dir;
-    const r = { x: Math.cos(this.angle + Math.PI / 2), y: Math.sin(this.angle + Math.PI / 2) };
-    let wx = f.x * input.forward + r.x * input.strafe;
-    let wy = f.y * input.forward + r.y * input.strafe;
-    const wl = Math.hypot(wx, wy);
-    if (wl > 1) {
-      wx /= wl;
-      wy /= wl;
-    }
-    const accel = 14 * dt;
-    this.vel.x = approach(this.vel.x, wx * speed, accel * Math.max(1, speed));
-    this.vel.y = approach(this.vel.y, wy * speed, accel * Math.max(1, speed));
-    const before = { ...this.pos };
-    this.tryMove(this.vel.x * dt, 0);
-    this.tryMove(0, this.vel.y * dt);
-    const moved = dist(before, this.pos);
-    this.speed = moved / Math.max(dt, 1e-4);
-
-    if (this.sprinting && this.speed > 0.5) {
-      this.stamina = Math.max(0, this.stamina - P.staminaDrain * dt);
-      this.exertion = Math.min(1, this.exertion + dt * 0.22);
-    } else {
-      this.stamina = Math.min(1, this.stamina + P.staminaRegen * dt * (this.speed < 0.2 ? 1.5 : 1));
-      this.exertion = Math.max(0, this.exertion - dt * 0.07);
-    }
-
+    const moved = moveBody(this, input, dt, sim.level, sim.world);
     this.stepAccum += moved;
     const stride = this.crouching ? 0.62 : this.sprinting ? 1.05 : 0.8;
     if (this.stepAccum >= stride) {
       this.stepAccum -= stride;
       const loud = this.crouching ? L.stepCrouch : this.sprinting ? L.stepSprint : L.stepWalk;
-      sim.emitNoise('step', this.pos, loud + (this.wounded ? 3 : 0), 'player');
+      sim.emitNoise('step', this.pos, loud + (this.wounded ? 3 : 0), 'player', { player: this.id });
     }
-    this.bob += moved * (this.sprinting ? 7 : 5.5);
-    const targetEye = this.crouching ? 0.33 : 0.5;
-    this.eye = approach(this.eye, targetEye, dt * 1.5);
-  }
-
-  private tryMove(dx: number, dy: number): void {
-    const nx = this.pos.x + dx;
-    const ny = this.pos.y + dy;
-    const r = P.radius;
-    const world = this.sim.world;
-    const lvl = this.sim.level;
-    for (const [ox, oy] of [
-      [-r, -r],
-      [r, -r],
-      [-r, r],
-      [r, r],
-    ] as const) {
-      const c = cellAt(lvl, { x: nx + ox, y: ny + oy });
-      if (world.isSolid(c)) return;
-    }
-    this.pos.x = nx;
-    this.pos.y = ny;
   }
 
   // ------------------------------------------------------------- breath [I, V]
@@ -227,9 +242,9 @@ export class Player {
         b.held = 0;
         b.recover = 2.5;
         this.exertion = Math.max(this.exertion, 0.7);
-        sim.emitNoise('gasp', this.headPos(), L.gasp, 'player');
+        sim.emitNoise('gasp', this.headPos(), L.gasp, 'player', { player: this.id });
         this.exhale(1.6);
-        sim.director.onGasp();
+        sim.director.onGasp(this);
       }
       return;
     }
@@ -237,7 +252,7 @@ export class Player {
       b.holding = false;
       const frac = clamp01(b.held / capacity);
       if (b.held > 0.4) {
-        sim.emitNoise('exhale', this.headPos(), 5 + 13 * frac * frac, 'player');
+        sim.emitNoise('exhale', this.headPos(), 5 + 13 * frac * frac, 'player', { player: this.id });
         this.exhale(0.6 + frac);
         b.recover = 0.6 + frac;
       }
@@ -250,7 +265,7 @@ export class Player {
       b.next = lerp(3.2, 0.9, this.exertion);
       const enclosed = this.hidden && this.hidden.kind !== 'bed' ? -3 : 0;
       const loud = lerp(L.breathCalm, L.breathPanting, this.exertion) + enclosed;
-      sim.emitNoise('breath', this.headPos(), loud, 'player');
+      sim.emitNoise('breath', this.headPos(), loud, 'player', { player: this.id });
       this.exhale(0.5 + this.exertion * 0.7);
     }
   }
@@ -285,26 +300,26 @@ export class Player {
   private toggleFlashlight(): void {
     const sim = this.sim;
     const fl = this.flashlight;
-    sim.emitNoise('click', this.headPos(), L.flashlightClick, 'player');
+    sim.emitNoise('click', this.headPos(), L.flashlightClick, 'player', { player: this.id });
     if (!fl.on && sim.time < fl.faultUntil) {
-      sim.director.onFlashlight(false, true);
+      sim.director.onFlashlight(false, true, this);
       return;
     }
     if (!fl.on && fl.battery <= 0.01) {
       if (this.inv.batteries > 0) this.swapBattery();
       else {
-        sim.notice('Dead. Nothing but the click.');
+        this.note('Dead. Nothing but the click.');
         return;
       }
     }
     fl.on = !fl.on;
-    sim.director.onFlashlight(fl.on, false);
+    sim.director.onFlashlight(fl.on, false, this);
   }
 
   private swapBattery(): void {
     this.inv.batteries--;
     this.flashlight.battery = 1;
-    this.sim.notice('You swap the battery by feel.');
+    this.note('You swap the battery by feel.');
   }
 
   private updateFlashlight(dt: number): void {
@@ -319,7 +334,7 @@ export class Player {
       if (this.inv.batteries > 0) this.swapBattery();
       else {
         fl.on = false;
-        this.sim.notice('The torch dies.');
+        this.note('The torch dies.');
       }
     }
   }
@@ -332,7 +347,8 @@ export class Player {
 
   // ------------------------------------------------------------- focus & interaction
 
-  private updateFocus(): void {
+  /** What you are looking at and could use. Public so a remote client can work it out locally. */
+  refreshFocus(): void {
     const sim = this.sim;
     const { level, world } = sim;
     const d = this.dir;
@@ -399,6 +415,7 @@ export class Player {
         return s.kind === 'drawer' ? 'Climb into drawer' : 'Hide in locker';
       }
       case 'item':
+        if (f.item.kind === 'record') return 'Pick up the page';
         return f.item.kind === 'note' ? 'Read note' : `Take ${f.item.kind === 'key' ? 'key' : f.item.kind}`;
       case 'tap':
         return this.isMarked ? 'Wash it off (hold)' : 'Run the tap (hold)';
@@ -434,9 +451,9 @@ export class Player {
         sim.touch(f.tap.cell, cellCenter(sim.level, f.tap.cell), 'tap');
         break;
       case 'fusebox':
-        if (sim.objectives.powerOn) sim.notice('The breaker hums. Power is on.');
+        if (sim.objectives.powerOn) this.note('The breaker hums. Power is on.');
         else if (this.inv.fuses < sim.world.fusesRequired)
-          sim.notice(`Three empty sockets. You have ${this.inv.fuses} fuse${this.inv.fuses === 1 ? '' : 's'}.`);
+          this.note(`Three empty sockets. You have ${this.inv.fuses} fuse${this.inv.fuses === 1 ? '' : 's'}.`);
         else {
           this.channel = { kind: 'breaker', t: 0, dur: 3.5, tick: 0 };
           sim.touch(sim.world.fuseBox.cell, cellCenter(sim.level, sim.world.fuseBox.cell), 'fusebox');
@@ -444,7 +461,7 @@ export class Player {
         }
         break;
       case 'radio':
-        if (!sim.objectives.powerOn) sim.notice('Dead. No power to the set.');
+        if (!sim.objectives.powerOn) this.note('Dead. No power to the set.');
         else {
           this.channel = { kind: 'radio', t: 0, dur: 3, tick: 0 };
           sim.touch(sim.world.radio.cell, cellCenter(sim.level, sim.world.radio.cell), 'radio');
@@ -454,19 +471,19 @@ export class Player {
         sim.touch(f.gate.cell, cellCenter(sim.level, f.gate.cell), 'gate');
         if (sim.objectives.gateOpen(f.gate)) this.channel = { kind: 'gate', t: 0, dur: 1.2, gate: f.gate, tick: 0 };
         else {
-          sim.emitNoise('rattle', this.pos, L.rattle, 'player');
-          sim.notice('Chained shut from outside.');
-          sim.director.onFalseLeadAttempt();
+          sim.emitNoise('rattle', this.pos, L.rattle, 'player', { player: this.id });
+          this.note('Chained shut from outside.');
+          sim.director.onFalseLeadAttempt(this);
         }
         break;
       case 'vent':
-        sim.notice('Cold air breathes out of the grate. The ducts run everywhere.');
+        this.note('Cold air breathes out of the grate. The ducts run everywhere.');
         break;
       case 'survivor':
-        sim.survivors.talk(f.id);
+        sim.survivors.talk(f.id, this);
         break;
       case 'prop':
-        sim.notice(f.prop.examine, 6);
+        this.note(f.prop.examine, 6);
         sim.director.onExamine(f.prop);
         break;
     }
@@ -480,28 +497,28 @@ export class Player {
       if (door.lock === 'maintenance' && this.inv.keys.has('maintenance')) {
         door.locked = false;
         sim.world.lockVersion++;
-        sim.emitNoise('door', pos, 18, 'player');
-        sim.notice('The key turns.');
+        sim.emitNoise('door', pos, 18, 'player', { player: this.id });
+        this.note('The key turns.');
       } else {
-        sim.emitNoise('rattle', pos, L.rattle, 'player');
-        sim.notice(`Locked. ${door.lock ? LOCK_LABELS[door.lock] : ''}`);
-        sim.director.onFalseLeadAttempt();
+        sim.emitNoise('rattle', pos, L.rattle, 'player', { player: this.id });
+        this.note(`Locked. ${door.lock ? LOCK_LABELS[door.lock] : ''}`);
+        sim.director.onFalseLeadAttempt(this);
         return;
       }
     }
     if (door.jammed) {
       // Barricaded [Y]. Never for good: hold to shove it, which costs time and noise.
-      sim.emitNoise('rattle', pos, L.rattle, 'player');
-      sim.notice('It gives an inch and stops. Something heavy is holding it.');
+      sim.emitNoise('rattle', pos, L.rattle, 'player', { player: this.id });
+      this.note('It gives an inch and stops. Something heavy is holding it.');
       sim.director.onJammedDoor(door);
       this.channel = { kind: 'force', t: 0, dur: 3.5, door, tick: 0.5 };
       return;
     }
     const closing = door.target > 0.5;
-    if (closing && cellAt(sim.level, this.pos) === door.cell) return;
+    if (closing && sim.players.some((p) => p.active && cellAt(sim.level, p.pos) === door.cell)) return;
     door.target = closing ? 0 : 1;
     door.speed = this.crouching ? 1.1 : 0.45;
-    sim.emitNoise('door', pos, this.crouching ? L.doorQuiet : L.door, 'player');
+    sim.emitNoise('door', pos, this.crouching ? L.doorQuiet : L.door, 'player', { player: this.id });
     sim.director.onDoor(door, closing);
   }
 
@@ -510,29 +527,39 @@ export class Player {
     if (item.kind === 'note') {
       const note = sim.world.notes[item.noteId!]!;
       note.read = true;
+      this.readingRecord = null;
       this.readingNote = note.id;
       this.readingAt = { ...this.pos };
       sim.director.onNoteRead(note);
       return;
     }
+    if (item.kind === 'record') {
+      item.state = 'taken';
+      sim.emitNoise('pickup', item.pos, 6, 'player', { player: this.id });
+      sim.story.onRecordFound(item, this);
+      return;
+    }
     item.state = 'taken';
-    sim.emitNoise('pickup', item.pos, 8, 'player');
+    sim.emitNoise('pickup', item.pos, 8, 'player', { player: this.id });
+    const shared = sim.players.length > 1;
     switch (item.kind) {
       case 'fuse':
         this.inv.fuses++;
-        sim.notice(`Fuse (${this.inv.fuses}/${sim.world.fusesRequired}).`);
+        if (shared) sim.notice(`${this.shortName} has a fuse (${this.inv.fuses}/${sim.world.fusesRequired}).`);
+        else this.note(`Fuse (${this.inv.fuses}/${sim.world.fusesRequired}).`);
         break;
       case 'key':
         this.inv.keys.add('maintenance');
-        sim.notice('A key on a lanyard: MAINTENANCE.');
+        if (shared) sim.notice(`${this.shortName} found a key on a lanyard: MAINTENANCE.`);
+        else this.note('A key on a lanyard: MAINTENANCE.');
         break;
       case 'battery':
         this.inv.batteries++;
-        sim.notice('A battery.');
+        this.note('A battery.');
         break;
       case 'bottle':
         this.inv.bottles++;
-        sim.notice('An empty bottle. Something to throw.');
+        this.note('An empty bottle. Something to throw.');
         break;
     }
     sim.director.onPickup(item);
@@ -561,7 +588,7 @@ export class Player {
       } else if (ch.kind === 'breaker') {
         sim.emitNoise('hum', cellCenter(sim.level, sim.world.fuseBox.access), 22, 'world');
       } else if (ch.kind === 'force' && ch.door) {
-        sim.emitNoise('rattle', cellCenter(sim.level, ch.door.cell), L.rattle, 'player');
+        sim.emitNoise('rattle', cellCenter(sim.level, ch.door.cell), L.rattle, 'player', { player: this.id });
       }
     }
     if (ch.t < ch.dur) return;
@@ -570,9 +597,9 @@ export class Player {
       case 'wash':
         if (this.isMarked) {
           this.markedUntil = 0;
-          sim.notice('The black comes away in cold strings.');
+          this.note('The black comes away in cold strings.');
           sim.director.onWashed();
-        } else sim.notice('Cold water. Your hands stop shaking, a little.');
+        } else this.note('Cold water. Your hands stop shaking, a little.');
         break;
       case 'breaker':
         this.inv.fuses -= sim.world.fusesRequired;
@@ -582,7 +609,7 @@ export class Player {
         sim.objectives.useRadio();
         break;
       case 'gate':
-        sim.objectives.escapeThrough(ch.gate!);
+        sim.objectives.escapeThrough(ch.gate!, this);
         break;
       case 'force': {
         const door = ch.door!;
@@ -591,8 +618,8 @@ export class Player {
         door.target = 1;
         door.speed = 0.6;
         sim.world.lockVersion++;
-        sim.emitNoise('doorBash', cellCenter(sim.level, door.cell), L.doorBash, 'player');
-        sim.notice('Whatever was holding it scrapes back. The door gives.');
+        sim.emitNoise('doorBash', cellCenter(sim.level, door.cell), L.doorBash, 'player', { player: this.id });
+        this.note('Whatever was holding it scrapes back. The door gives.');
         break;
       }
     }
@@ -607,27 +634,28 @@ export class Player {
   private enterHide(spot: HidingSpot): void {
     const sim = this.sim;
     if (spot.occupant) {
-      if (spot.occupant.kind === 'survivor') sim.survivors.whisperOccupied(spot.occupant.id);
+      if (spot.occupant.kind === 'survivor') sim.survivors.whisperOccupied(spot.occupant.id, this);
+      else this.note(`${sim.players[spot.occupant.id ?? 0]?.shortName ?? 'Someone'} is already in there.`);
       return;
     }
     if (spot.body) {
-      sim.notice(spot.body, 7);
-      sim.director.onFoundRemains();
+      this.note(spot.body, 7);
+      sim.director.onFoundRemains(this);
       return;
     }
     if (spot.kind === 'bed' && spot.cluttered) {
-      sim.notice('Boxes and a rolled mattress. No room under here.');
+      this.note('Boxes and a rolled mattress. No room under here.');
       return;
     }
     const quiet = this.crouching || spot.ajar;
     const dur = spot.ajar ? 0.35 : spot.kind === 'bed' ? 0.8 : 0.65;
     this.transition = { spot, t: 0, dur, entering: true };
-    spot.occupant = { kind: 'player' };
+    spot.occupant = { kind: 'player', id: this.id };
     const at = cellCenter(sim.level, spot.access);
-    if (spot.kind === 'bed') sim.emitNoise('drag', at, quiet ? 6 : 12, 'player');
-    else if (!spot.ajar) sim.emitNoise('locker', at, quiet ? L.lockerQuiet : L.locker, 'player');
+    if (spot.kind === 'bed') sim.emitNoise('drag', at, quiet ? 6 : 12, 'player', { player: this.id });
+    else if (!spot.ajar) sim.emitNoise('locker', at, quiet ? L.lockerQuiet : L.locker, 'player', { player: this.id });
     sim.touch(spot.cell, cellCenter(sim.level, spot.cell), spot.kind);
-    sim.director.onHide(spot, true);
+    sim.director.onHide(spot, true, this);
   }
 
   exitHide(): void {
@@ -636,8 +664,8 @@ export class Player {
     const sim = this.sim;
     this.transition = { spot, t: 0, dur: 0.5, entering: false };
     const at = cellCenter(sim.level, spot.access);
-    if (spot.kind === 'bed') sim.emitNoise('drag', at, this.crouching ? 6 : 10, 'player');
-    else sim.emitNoise('locker', at, L.lockerQuiet + 6, 'player');
+    if (spot.kind === 'bed') sim.emitNoise('drag', at, this.crouching ? 6 : 10, 'player', { player: this.id });
+    else sim.emitNoise('locker', at, L.lockerQuiet + 6, 'player', { player: this.id });
     sim.touch(spot.cell, cellCenter(sim.level, spot.cell), spot.kind);
   }
 
@@ -656,6 +684,7 @@ export class Player {
       spot.ajar = false;
       this.hideBase = angleTo(sc, acc);
       this.angle = this.hideBase;
+      this.pitch = 0;
       if (spot.kind === 'bed') {
         this.pos = { ...sc };
         this.eye = 0.1;
@@ -670,7 +699,8 @@ export class Player {
       this.pos = { ...acc };
       this.angle = angleTo(sc, acc);
       this.eye = this.crouching ? 0.33 : 0.5;
-      sim.director.onHide(spot, false);
+      this.pitch = 0;
+      sim.director.onHide(spot, false, this);
     }
   }
 
@@ -686,9 +716,10 @@ export class Player {
       vel: { x: d.x * 9, y: d.y * 9 },
       t: 0,
       origin: { ...this.pos },
+      player: this.id,
     });
-    sim.emitNoise('whoosh', this.pos, L.throwWhoosh, 'player', { origin: { ...this.pos } });
-    sim.director.onThrow();
+    sim.emitNoise('whoosh', this.pos, L.throwWhoosh, 'player', { origin: { ...this.pos }, player: this.id });
+    sim.director.onThrow(this);
   }
 
   // ------------------------------------------------------------- harm
@@ -705,16 +736,99 @@ export class Player {
     this.stamina = 1;
     this.exhausted = false;
     this.exertion = 1;
-    sim.events.push({ type: 'shake', amount: 1 });
-    sim.notice('It opened you up. You can still run.', 4);
+    sim.events.push({ type: 'shake', amount: 1, to: this.id });
+    this.note('It opened you up. You can still run.', 4);
     return false;
   }
 
   die(cause: string): void {
-    if (!this.alive) return;
+    if (!this.alive || this.escaped) return;
     this.alive = false;
     this.deathCause = cause;
     this.channel = null;
-    this.sim.onPlayerDeath(cause);
+    this.readingNote = null;
+    this.readingRecord = null;
+    this.sim.onPlayerDeath(this, cause);
   }
+
+  /** Out through the gate. */
+  escape(): void {
+    if (this.active) this.sim.onEscape(this);
+  }
+}
+
+/** The parts of a player that walking moves. */
+export interface Body {
+  pos: Vec2;
+  vel: Vec2;
+  angle: number;
+  speed: number;
+  crouching: boolean;
+  sprinting: boolean;
+  exhausted: boolean;
+  stamina: number;
+  exertion: number;
+  wounded: boolean;
+  bob: number;
+  eye: number;
+}
+
+/**
+ * One step of walking: speed, stamina, collision, head bob. Shared by the simulation and by
+ * a guest in a shared run predicting their own body between the host's snapshots, so both
+ * move a body by exactly the same rules. Returns the distance moved.
+ */
+export function moveBody(b: Body, input: InputState, dt: number, level: Level, world: { isSolid(cell: number): boolean }): number {
+  if (b.stamina <= 0.01) b.exhausted = true;
+  if (b.exhausted && b.stamina > 0.35) b.exhausted = false;
+  const moving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
+  b.sprinting = input.sprint && input.forward > 0.1 && !b.crouching && !b.exhausted && moving;
+  let speed = b.crouching ? P.crouchSpeed : b.sprinting ? P.sprintSpeed : P.walkSpeed;
+  if (b.wounded) speed *= 0.95;
+  const f = { x: Math.cos(b.angle), y: Math.sin(b.angle) };
+  const r = { x: Math.cos(b.angle + Math.PI / 2), y: Math.sin(b.angle + Math.PI / 2) };
+  let wx = f.x * input.forward + r.x * input.strafe;
+  let wy = f.y * input.forward + r.y * input.strafe;
+  const wl = Math.hypot(wx, wy);
+  if (wl > 1) {
+    wx /= wl;
+    wy /= wl;
+  }
+  const accel = 14 * dt;
+  b.vel.x = approach(b.vel.x, wx * speed, accel * Math.max(1, speed));
+  b.vel.y = approach(b.vel.y, wy * speed, accel * Math.max(1, speed));
+  const before = { ...b.pos };
+  tryMove(b, b.vel.x * dt, 0, level, world);
+  tryMove(b, 0, b.vel.y * dt, level, world);
+  const moved = dist(before, b.pos);
+  b.speed = moved / Math.max(dt, 1e-4);
+
+  if (b.sprinting && b.speed > 0.5) {
+    b.stamina = Math.max(0, b.stamina - P.staminaDrain * dt);
+    b.exertion = Math.min(1, b.exertion + dt * 0.22);
+  } else {
+    b.stamina = Math.min(1, b.stamina + P.staminaRegen * dt * (b.speed < 0.2 ? 1.5 : 1));
+    b.exertion = Math.max(0, b.exertion - dt * 0.07);
+  }
+  b.bob += moved * (b.sprinting ? 7 : 5.5);
+  const targetEye = b.crouching ? 0.33 : 0.5;
+  b.eye = approach(b.eye, targetEye, dt * 1.5);
+  return moved;
+}
+
+function tryMove(b: Body, dx: number, dy: number, level: Level, world: { isSolid(cell: number): boolean }): void {
+  const nx = b.pos.x + dx;
+  const ny = b.pos.y + dy;
+  const r = P.radius;
+  for (const [ox, oy] of [
+    [-r, -r],
+    [r, -r],
+    [-r, r],
+    [r, r],
+  ] as const) {
+    const c = cellAt(level, { x: nx + ox, y: ny + oy });
+    if (world.isSolid(c)) return;
+  }
+  b.pos.x = nx;
+  b.pos.y = ny;
 }

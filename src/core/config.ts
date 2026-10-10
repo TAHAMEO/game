@@ -98,16 +98,41 @@ export const PRESETS: Readonly<Record<'core' | 'mvp' | 'full', Features>> = {
 
 export type PresetName = keyof typeof PRESETS;
 
+/** How often the Director may stage a jump scare [scares.ts]. */
+export type ScareLevel = 'off' | 'normal' | 'intense';
+
 export interface SimConfig {
   seed: number;
   features: Features;
   /** Designer override for the persisted Entity Knowledge tier (null = use the save). */
   tierOverride: number | null;
+  /** How many people go in together. 1 is the single-player game. */
+  players: number;
+  /** Jump scares staged by the Director. */
+  scares: ScareLevel;
+  /** The story layer: case files, visions, whispers [story.ts]. */
+  story: boolean;
 }
 
 export function defaultConfig(seed = Date.now() >>> 0): SimConfig {
-  return { seed, features: { ...PRESETS.full }, tierOverride: null };
+  return { seed, features: { ...PRESETS.full }, tierOverride: null, players: 1, scares: 'normal', story: true };
 }
+
+/** Most people a shared run supports. */
+export const MAX_PLAYERS = 4;
+
+/**
+ * Vertical proportions, in cells (one cell is about 1.6 m). The simulation is flat; these
+ * only matter where something is aimed up or down — a torch at a face — and to the renderer.
+ */
+export const BODY = {
+  wallHeight: 1.75,
+  /** Eye height for a `Player.eye` stance value (0.5 standing, 0.33 crouched, 0.1 under a bed). */
+  eyeHeight: (eye: number): number => 0.2 + (eye - 0.1) * 2.2,
+  entityHeight: 1.62,
+  /** Where its chest starts: a beam above this is "in its face". */
+  entityChest: 0.9,
+} as const;
 
 /** Tuning that designers are expected to touch. Units: cells, seconds, "dB-ish" loudness. */
 export const TUNING = {

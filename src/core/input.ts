@@ -6,6 +6,8 @@ export interface InputState {
   strafe: number;
   /** Radians of turn this step (mouse + keys). Positive = clockwise on the map. */
   turn: number;
+  /** Radians of vertical look this step. Positive = up. */
+  pitch: number;
   sprint: boolean;
   crouch: boolean;
   /** Held this step. */
@@ -21,6 +23,7 @@ export const idleInput = (): InputState => ({
   forward: 0,
   strafe: 0,
   turn: 0,
+  pitch: 0,
   sprint: false,
   crouch: false,
   interact: false,

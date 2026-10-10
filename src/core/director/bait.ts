@@ -41,14 +41,18 @@ export class BaitPlanner {
     const sim = this.sim;
     const target = sim.objectives.predictedTarget();
     if (target < 0) return null;
-    return findPath(sim.level, sim.player.cell, target, { passable: sim.world.humanPassable, maxExpanded: 4000 });
+    return findPath(sim.level, sim.focus.cell, target, { passable: sim.world.humanPassable, maxExpanded: 4000 });
   }
 
+  /** Could anyone in the building see this point right now? */
   private visibleToPlayer(p: Vec2): boolean {
-    const pl = this.sim.player;
-    if (dist(pl.pos, p) > 14) return false;
-    if (Math.abs(angleDiff(pl.angle, angleTo(pl.pos, p))) > 0.75) return false;
-    return this.sim.world.los(pl.pos, p);
+    for (const pl of this.sim.players) {
+      if (!pl.active) continue;
+      if (dist(pl.pos, p) > 14) continue;
+      if (Math.abs(angleDiff(pl.angle, angleTo(pl.pos, p))) > 0.75) continue;
+      if (this.sim.world.los(pl.pos, p)) return true;
+    }
+    return false;
   }
 
   private reachable(cell: number): boolean {
@@ -116,14 +120,14 @@ export class BaitPlanner {
     if (sim.time < this.cooldownUntil && !this.forceNext) return null;
     const f = sim.features;
     const tier = sim.director.tier;
-    const pl = sim.player;
+    const pl = sim.focus;
     const profile = sim.director.profile;
     const c: Candidate[] = [];
     const needFuses = pl.inv.fuses < sim.world.fusesRequired && !sim.objectives.powerOn;
 
     if (f.breakerAmbush && !sim.objectives.powerOn && pl.inv.fuses >= sim.world.fusesRequired && (sim.memory.learned('breaker') || tier >= 2))
       c.push({ kind: 'breakerAmbush', weight: 6, build: () => this.buildBreaker() });
-    if (f.theMark && pl.isMarked && sim.memory.learned('mark')) c.push({ kind: 'tapWatch', weight: 3, build: () => this.buildTapWatch() });
+    if (f.theMark && sim.players.some((p) => p.active && p.isMarked) && sim.memory.learned('mark')) c.push({ kind: 'tapWatch', weight: 3, build: () => this.buildTapWatch() });
     for (const r of sim.director.adapt.routeCounters()) {
       if (this.handledRoutes.has(r)) continue;
       c.push({ kind: 'jam', weight: 3, build: () => this.buildRouteCounter(r) });
@@ -242,7 +246,7 @@ export class BaitPlanner {
     if (!route1 || route1.length < 10) return null;
     const target = route1[route1.length - 1]!;
     const avoid = new Set(route1);
-    const route2 = findPath(level, sim.player.cell, target, {
+    const route2 = findPath(level, sim.focus.cell, target, {
       passable: world.humanPassable,
       extraCost: (c) => (avoid.has(c) ? 25 : 0),
       maxExpanded: 5000,
@@ -314,7 +318,7 @@ export class BaitPlanner {
   /** A vent behind the player relative to the ambush, chosen at the moment of knocking. */
   herdVent(ambush: Vec2): number {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     const dPB = dist(pl.pos, ambush);
     let best = -1;
     let bestScore = -Infinity;
@@ -336,14 +340,14 @@ export class BaitPlanner {
   buildRelocate(): Plan | null {
     const sim = this.sim;
     const { level, world } = sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     const needed: Item[] = world.items.filter((i) => {
       if (i.state !== 'ground' || i.relocated) return false;
       if (i.kind === 'fuse') return pl.inv.fuses < world.fusesRequired;
       if (i.kind === 'key') return !pl.inv.keys.has('maintenance') && world.doors.some((d) => d.lock === 'maintenance' && d.locked);
       return false;
     });
-    const items = needed.filter((i) => dist(i.pos, pl.pos) >= 8 && !this.visibleToPlayer(i.pos));
+    const items = needed.filter((i) => sim.players.every((p) => !p.active || dist(i.pos, p.pos) >= 8) && !this.visibleToPlayer(i.pos));
     if (!items.length) return null;
     const playerRegion = world.regionAt(pl.cell);
     const rooms = level.regions.filter((r) => {
@@ -424,7 +428,7 @@ export class BaitPlanner {
   buildTapWatch(): Plan | null {
     const sim = this.sim;
     const { level } = sim;
-    const pl = sim.player;
+    const pl = sim.players.find((p) => p.active && p.isMarked) ?? sim.focus;
     const taps = [...sim.world.taps].sort((a, b) => dist(cellCenter(level, a.access), pl.pos) - dist(cellCenter(level, b.access), pl.pos));
     const tap = taps[0];
     if (!tap) return null;
@@ -445,7 +449,7 @@ export class BaitPlanner {
   buildMimic(): Plan | null {
     const sim = this.sim;
     const { level } = sim;
-    const pl = sim.player;
+    const pl = sim.focus;
     const sv = sim.rng.weighted(sim.survivors.list, (s) => 0.3 + s.attachment + (s.alive ? 0 : 2) + (s.met ? 1 : 0));
     if (!sv) return null;
     const route = this.predictedRoute() ?? [];
@@ -483,7 +487,7 @@ export class BaitPlanner {
     const doors = region.links
       .filter((l) => l.via >= 0)
       .map((l) => world.doorAt.get(l.via)!)
-      .filter((d) => d && !d.locked && !d.jammed && !world.wouldStrand(d.cell, sim.player.soundCell));
+      .filter((d) => d && !d.locked && !d.jammed && !sim.players.some((p) => p.active && world.wouldStrand(d.cell, p.soundCell)));
     if (doors.length) {
       const door = sim.rng.pick(doors);
       return this.plan('jam', 'Y', [{ op: 'jam', door: door.index }], `barricade a door on ${level.zones[region.zone]!.name}, your safe route`);

@@ -45,6 +45,16 @@ export interface SaveData {
   lastCharacter: LastCharacter | null;
   survivorsLost: { name: string; color: [number, number, number]; run: number }[];
   journal: string[];
+  /** The story so far: case-file pages found, visions seen, endings reached. Survives every death. */
+  story: StorySave;
+}
+
+export interface StorySave {
+  found: number[];
+  visions: string[];
+  endings: string[];
+  /** Every name that has gone in — the nest's wall remembers them [story]. */
+  names: string[];
 }
 
 /** Knowledge tiers by experience. A death is worth 3, an escape 3, a survived encounter 0.5. */
@@ -68,6 +78,7 @@ export function emptySave(): SaveData {
     lastCharacter: null,
     survivorsLost: [],
     journal: [],
+    story: { found: [], visions: [], endings: [], names: [] },
   };
 }
 
@@ -124,7 +135,8 @@ export class BrowserStore implements KVStore {
   }
 }
 
-const KEY = 'the-quiet.save.v1';
+export const SAVE_KEY = 'the-quiet.save.v1';
+const KEY = SAVE_KEY;
 
 export class Persistence {
   data: SaveData;
@@ -145,6 +157,7 @@ export class Persistence {
         learned: { ...base.learned, ...(d.learned ?? {}) },
         tellStats: { ...base.tellStats, ...(d.tellStats ?? {}) },
         hideKinds: { ...base.hideKinds, ...(d.hideKinds ?? {}) },
+        story: { ...base.story, ...(d.story ?? {}) },
       };
     } catch {
       return emptySave();

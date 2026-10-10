@@ -1,0 +1,30 @@
+import * as THREE from 'three';
+import { TextureBank } from '../src/render3d/texgen/TextureBank';
+import { RECIPES } from '../src/render3d/texgen/recipes';
+
+const params = new URLSearchParams(location.search);
+const size = Number(params.get('size') ?? 256);
+const which = params.get('map') ?? 'map';
+const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
+const names = Object.keys(RECIPES);
+const cols = 6;
+const cell = 200;
+const W = cols * cell;
+const H = Math.ceil(names.length / cols) * cell;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setSize(W, H, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const bank = new TextureBank(renderer, () => size);
+await bank.generate(() => {}, async () => {});
+const scene = new THREE.Scene();
+const cam = new THREE.OrthographicCamera(0, W, H, 0, -1, 1);
+names.forEach((n, i) => {
+  const set = bank.get(n);
+  const tex = which === 'normal' ? set.normalMap : which === 'orm' ? set.orm : set.map;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(cell - 4, cell - 4), new THREE.MeshBasicMaterial({ map: tex }));
+  m.position.set((i % cols) * cell + cell / 2, H - (Math.floor(i / cols) * cell + cell / 2), 0);
+  scene.add(m);
+});
+renderer.setRenderTarget(null);
+renderer.render(scene, cam);
+(window as unknown as { __done: boolean }).__done = true;

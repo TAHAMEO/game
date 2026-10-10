@@ -18,11 +18,20 @@ export class Bot {
   private lastPos = { x: 0, y: 0 };
   private wander = -1;
 
-  constructor(private readonly sim: Sim, private readonly opts: { hides?: boolean; torch?: boolean; panicky?: boolean; flees?: boolean } = {}) {}
+  constructor(
+    private readonly sim: Sim,
+    private readonly opts: { hides?: boolean; torch?: boolean; panicky?: boolean; flees?: boolean } = {},
+    private readonly id = 0,
+  ) {}
+
+  /** The player this bot drives. */
+  private get me() {
+    return this.sim.players[this.id]!;
+  }
 
   input(): InputState {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.me;
     const inp = idleInput();
     if (!pl.alive) return inp;
     const ent = sim.entity;
@@ -114,7 +123,7 @@ export class Bot {
   /** Run for somewhere it can't reach before you can, then look for a place to hide. */
   private flee(inp: InputState, dEnt: number): InputState {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.me;
     if (sim.time > this.fleeUntil || this.fleeGoal < 0 || pl.cell === this.fleeGoal) {
       const pass = (c: number) => sim.world.humanPassable(c) || this.isDoor(c);
       const fromEnt = distanceField(sim.level, [sim.entity.cell], sim.world.entityPassable, 40);
@@ -161,12 +170,12 @@ export class Bot {
 
   private isDoor(c: number): boolean {
     const d = this.sim.world.doorAt.get(c);
-    return !!d && !d.jammed && (!d.locked || (d.lock === 'maintenance' && this.sim.player.inv.keys.has('maintenance')));
+    return !!d && !d.jammed && (!d.locked || (d.lock === 'maintenance' && this.me.inv.keys.has('maintenance')));
   }
 
   private targetCell(): number {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.me;
     if (pl.isMarked && sim.features.theMark) {
       const tap = [...sim.world.taps].sort((a, b) => dist(cellCenter(sim.level, a.access), pl.pos) - dist(cellCenter(sim.level, b.access), pl.pos))[0];
       if (tap) return tap.access;
@@ -182,7 +191,7 @@ export class Bot {
 
   private lookTarget() {
     const sim = this.sim;
-    const pl = sim.player;
+    const pl = this.me;
     const t = this.goal;
     for (const wo of sim.level.wallObjects) if (wo.access === t) return cellCenter(sim.level, wo.cell);
     for (const it of sim.world.items) if (it.state === 'ground' && cellAt(sim.level, it.pos) === pl.cell) return it.pos;
