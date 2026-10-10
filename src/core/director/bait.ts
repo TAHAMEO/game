@@ -100,10 +100,10 @@ export class BaitPlanner {
         spot.baited = false;
         continue;
       }
-      if (sim.time >= at) {
+      // Busy (mid-chase, mid-check)? The trap keeps; it collects as soon as it is free.
+      if (sim.time >= at && sim.entity.forceCheck(spot, `[T] it left that ${spot.kind} open for you — and comes to collect`)) {
         this.pendingChecks.delete(id);
         spot.baited = false;
-        sim.entity.forceCheck(spot, `[T] it left that ${spot.kind} open for you — and comes to collect`);
       }
     }
   }

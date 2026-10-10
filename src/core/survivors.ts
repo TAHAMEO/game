@@ -2,8 +2,11 @@ import { TUNING } from './config';
 import { SURVIVOR_POOL, type SurvivorDef } from './hospital';
 import { cellAt, cellCenter } from './level';
 import { dist, type Vec2 } from './math';
+import { NEST_SURVIVORS } from './persistence';
 import type { Sim } from './sim';
 import type { HidingSpot } from './types';
+
+const ASK_BATTERY = 'Have you got a battery? Please. I can’t be in the dark again.';
 
 export interface Survivor {
   id: number;
@@ -19,7 +22,7 @@ export interface Survivor {
   talkIndex: number;
   waving: boolean;
   diedAt: number;
-  private_: { nextNoise: number; nextCall: number; threatSince: number; playerNearDuringThreat: boolean; awaySince: number; lastWave: number; askedBattery: boolean };
+  private_: { nextNoise: number; nextCall: number; threatSince: number; playerNearDuringThreat: boolean; awaySince: number; lastWave: number; battery: 'unasked' | 'asked' | 'given' };
 }
 
 const L = TUNING.loudness;
@@ -56,7 +59,7 @@ export class Survivors {
         talkIndex: 0,
         waving: false,
         diedAt: -1,
-        private_: { nextNoise: rng.range(20, 60), nextCall: 0, threatSince: -1, playerNearDuringThreat: false, awaySince: -1, lastWave: -99, askedBattery: false },
+        private_: { nextNoise: rng.range(20, 60), nextCall: 0, threatSince: -1, playerNearDuringThreat: false, awaySince: -1, lastWave: -99, battery: 'unasked' },
       };
       if (home) home.occupant = { kind: 'survivor', id: i };
       this.list.push(sv);
@@ -165,10 +168,10 @@ export class Survivors {
     sv.waving = false;
     const pl = sim.player;
     const p = sv.private_;
-    if (p.askedBattery && pl.inv.batteries > 0) {
+    if (p.battery === 'asked' && pl.inv.batteries > 0) {
       pl.inv.batteries--;
       pl.inv.bottles++;
-      p.askedBattery = false;
+      p.battery = 'given';
       sv.attachment += 2;
       this.say(sv, 'Thank you. Here — it’s not much. Throw it, it chases the sound. Mostly.');
       return;
@@ -179,6 +182,8 @@ export class Survivors {
       sv.talkIndex++;
       sv.attachment += 1;
     }
+    // Only a request they actually made can be answered, and they make it once.
+    if (line === ASK_BATTERY) p.battery = 'asked';
     this.say(sv, line);
   }
 
@@ -195,10 +200,7 @@ export class Survivors {
       zone ? `There was a fuse in ${zone}. I saw it before the lights went.` : 'The breaker’s in Maintenance. Downstairs. I’m not going down there.',
       'Don’t trust the lights. It likes it when you stand in the light.',
     ];
-    if (sim.player.inv.batteries > 0) {
-      sv.private_.askedBattery = true;
-      out.push('Have you got a battery? Please. I can’t be in the dark again.');
-    }
+    if (sim.player.inv.batteries > 0 && sv.private_.battery === 'unasked') out.push(ASK_BATTERY);
     out.push('If you hear me calling for you… make sure it’s me.');
     return out;
   }
@@ -214,7 +216,9 @@ export class Survivors {
     sv.waving = false;
     sim.emitNoise('scream', sv.pos, 60, 'survivor', { speaker: sv.id });
     sim.say(sv.def.name, '—', { voice: this.voice(sv), duration: 1.5 });
-    sim.memory.data.survivorsLost.push({ name: sv.def.name, color: sv.def.color, run: sim.runNumber });
+    const lost = sim.memory.data.survivorsLost;
+    lost.push({ name: sv.def.name, color: sv.def.color, run: sim.runNumber });
+    if (lost.length > NEST_SURVIVORS) lost.splice(0, lost.length - NEST_SURVIVORS);
     sim.log('X', `${sv.def.name} is dead (${cause}). It has their voice now.`);
   }
 

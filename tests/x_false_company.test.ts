@@ -114,6 +114,30 @@ describe('X. False company', () => {
     }
   });
 
+  it('trades for a battery only after asking for one, and only once', () => {
+    const sim = makeSim({ seed: 2 });
+    sedateEntity(sim);
+    const sv = sim.survivors.list[0]!;
+    const inv = sim.player.inv;
+    inv.batteries = 2;
+    const bottles = inv.bottles;
+    const said: string[] = [];
+    const orig = sim.say.bind(sim);
+    sim.say = (speaker, text, opts) => {
+      said.push(text);
+      orig(speaker, text, opts);
+    };
+    for (let i = 0; i < 3; i++) sim.survivors.talk(sv.id);
+    expect(inv.batteries).toBe(2); // nobody asked yet
+    sim.survivors.talk(sv.id);
+    expect(said.at(-1)).toMatch(/battery/);
+    sim.survivors.talk(sv.id);
+    expect(inv.batteries).toBe(1);
+    expect(inv.bottles).toBe(bottles + 1);
+    for (let i = 0; i < 4; i++) sim.survivors.talk(sv.id);
+    expect(inv.batteries).toBe(1); // asked once, traded once
+  });
+
   it('a second kill does not lose the first body', () => {
     const sim = makeSim({ seed: 2 });
     sedateEntity(sim);

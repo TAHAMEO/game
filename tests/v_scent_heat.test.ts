@@ -131,4 +131,17 @@ describe('V. The mark', () => {
     expect(sim.player.isMarked).toBe(false);
     expect(tapNoise).toBeGreaterThan(4); // a running tap commits you to a known, noisy spot
   });
+
+  it('a mark that lands mid-rinse takes the full wash to come off', () => {
+    const sim = makeSim({ seed: 35 });
+    sedateEntity(sim);
+    placePlayer(sim, 1, 16, Math.PI); // W bath, facing the tap at (0,16)
+    step(sim, 1 / 60, { interact: true, interactPressed: true });
+    step(sim, 1, { interact: true });
+    (sim.entity as unknown as { markPlayer(why: string): void }).markPlayer('near miss');
+    step(sim, 1, { interact: true });
+    expect(sim.player.isMarked).toBe(true); // a plain rinse would have ended at 1.5 s
+    step(sim, 2.5, { interact: true });
+    expect(sim.player.isMarked).toBe(false);
+  });
 });

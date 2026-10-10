@@ -58,6 +58,30 @@ describe('T. The bait economy', () => {
     expect(checked).toBe(true);
   });
 
+  it('OFFERED SAFETY keeps: if it is busy when the check falls due, it collects later', () => {
+    const sim = makeSim({ seed: 21, tier: 0 });
+    controlled(sim, cell(sim, 50, 13));
+    const spot = sim.world.spots.find((s) => s.kind === 'locker' && !s.occupant)!;
+    spot.baited = true;
+    sim.player.pos = cellCenter(sim.level, spot.access);
+    sim.player.hidden = spot;
+    spot.occupant = { kind: 'player' };
+    // Busy checking somewhere else, and stays busy past the moment the check falls due.
+    const other = sim.world.spots.find((s) => s !== spot && !s.occupant)!;
+    sim.entity.beginCheck([other.id], false, 'test: busy elsewhere');
+    sim.entity.update = () => {};
+    step(sim, 12);
+    expect(spot.baited).toBe(true);
+    delete (sim.entity as { update?: unknown }).update;
+    sim.entity.state = { kind: 'roam', dest: sim.entity.cell, pauseUntil: sim.time + 999 };
+    const collected = stepUntil(sim, 5, () => {
+      const s = sim.entity.state;
+      return (s.kind === 'check' && s.spot === spot.id) || !sim.player.alive;
+    });
+    expect(collected).toBe(true);
+    expect(spot.baited).toBe(false);
+  });
+
   it('HERDING: waits where you are going, then knocks on the ducts behind you', () => {
     const sim = makeSim({ seed: 22, tier: 1 });
     placePlayer(sim, 20, 18, 0);

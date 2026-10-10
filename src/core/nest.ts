@@ -1,5 +1,5 @@
 import { cellCenter, cellDistance, Tile } from './level';
-import { KNOWLEDGE_SIGNS } from './persistence';
+import { KNOWLEDGE_SIGNS, NEST_SURVIVORS } from './persistence';
 import type { Sim } from './sim';
 
 /**
@@ -32,7 +32,7 @@ export function dressNest(sim: Sim): void {
       if (!sign) continue;
       world.props.push({ id: world.newId(), kind: 'sign', pos: place(), label: sign.label, examine: sign.examine });
     }
-    for (const s of data.survivorsLost.slice(-8)) {
+    for (const s of data.survivorsLost.slice(-NEST_SURVIVORS)) {
       world.props.push({
         id: world.newId(),
         kind: 'survivorBody',

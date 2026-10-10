@@ -234,6 +234,8 @@ export class Sim {
     } else {
       data.escapes++;
       this.memory.addXp(3);
+      // [W] "Your previous body" is the life just before this one; this one got out.
+      data.lastCharacter = null;
     }
     data.flashlightReliance = data.flashlightReliance * 0.6 + this.director.profile.flashlightReliance * 0.4;
     this.memory.save();

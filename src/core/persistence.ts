@@ -49,6 +49,8 @@ export interface SaveData {
 
 /** Knowledge tiers by experience. A death is worth 3, an escape 3, a survived encounter 0.5. */
 export const TIER_XP = [0, 4, 10, 18, 30] as const;
+/** How many of the survivors it took the nest keeps on show (and the save remembers) [W]. */
+export const NEST_SURVIVORS = 8;
 
 export function emptySave(): SaveData {
   return {

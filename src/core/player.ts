@@ -548,6 +548,8 @@ export class Player {
       return;
     }
     ch.t += dt;
+    // Washing off the mark takes longer than rinsing your hands, even if it lands mid-rinse [V].
+    if (ch.kind === 'wash') ch.dur = this.isMarked ? 4 : 1.5;
     ch.tick -= dt;
     if (ch.tick <= 0) {
       ch.tick = 0.5;

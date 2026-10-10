@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cellCenter } from '../src/core/level';
-import { emptySave, MemoryStore, type SaveData } from '../src/core/persistence';
+import { emptySave, MemoryStore, NEST_SURVIVORS, type SaveData } from '../src/core/persistence';
 import { makeSim, placePlayer, sedateEntity, step } from './helpers';
 
 function storeWith(patch: Partial<SaveData>): MemoryStore {
@@ -57,6 +57,27 @@ describe('W. The nest — what it keeps', () => {
     expect(remains ?? propped).toBeDefined();
     expect((remains?.examine ?? propped?.body ?? '').includes('Okafor')).toBe(true);
     expect(late.player.name).not.toBe('Nurse A. Okafor');
+  });
+
+  it('an escape leaves no previous body for the next life', () => {
+    const last = { name: 'Nurse A. Okafor', run: 5, cell: 0, zone: 'Main Hall', cause: 'It caught you in the open.', spot: null };
+    const store = storeWith({ runs: 5, xp: 11, lastCharacter: last });
+    const got = makeSim({ seed: 52, store });
+    got.onEscape();
+    const next = makeSim({ seed: 52, store });
+    expect(next.memory.data.lastCharacter).toBeNull();
+    expect(next.world.props.some((p) => p.kind === 'remains')).toBe(false);
+    expect(next.world.spots.some((s) => s.body)).toBe(false);
+  });
+
+  it('remembers only as many of the survivors it took as it can show', () => {
+    const lost = Array.from({ length: 12 }, (_, i) => ({ name: `S${i}`, color: [1, 1, 1] as [number, number, number], run: i }));
+    const sim = makeSim({ seed: 54, store: storeWith({ survivorsLost: lost }) });
+    sedateEntity(sim);
+    sim.survivors.kill(sim.survivors.list[0]!.id, 'test');
+    const kept = sim.memory.data.survivorsLost;
+    expect(kept).toHaveLength(NEST_SURVIVORS);
+    expect(kept.at(-1)!.name).toBe(sim.survivors.list[0]!.def.name);
   });
 
   it('props your previous body up in the locker you died in', () => {

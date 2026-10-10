@@ -565,10 +565,12 @@ export class Entity {
   }
 
   /** Forced by the Director when a baited spot gets taken [T: offered safety]. */
-  forceCheck(spot: HidingSpot, reason: string): void {
+  /** Go and open `spot` now. False if it is busy (chasing, killing, checking) and cannot. */
+  forceCheck(spot: HidingSpot, reason: string): boolean {
     const k = this.state.kind;
-    if (k === 'chase' || k === 'lunge' || k === 'kill' || k === 'check') return;
+    if (k === 'chase' || k === 'lunge' || k === 'kill' || k === 'check') return false;
     this.beginCheck([spot.id], true, reason);
+    return true;
   }
 
   startLeave(allowFake: boolean, reason: string): void {
