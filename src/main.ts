@@ -5,7 +5,7 @@ import { BrowserStore, Persistence, type KVStore } from './core/persistence';
 import { Sim } from './core/sim';
 import { CASE_FILES } from './core/storyText';
 import type { GameEvent } from './core/types';
-import { openFriends, type FriendsHost } from './net/lobby';
+import { closeNetwork, openFriends, type FriendsHost } from './net/lobby';
 import { SoloSession, type Session } from './net/session';
 import { Renderer as RetroRenderer } from './render/raycaster';
 import { GameRenderer, type RenderFrame } from './render3d/GameRenderer';
@@ -52,6 +52,11 @@ let canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const screens = document.querySelector<HTMLElement>('#screens')!;
 const hudRoot = document.querySelector<HTMLElement>('#hud')!;
 const hud = new Hud(hudRoot);
+const netStatus = document.createElement('div');
+netStatus.id = 'net-status';
+netStatus.hidden = true;
+document.querySelector('#app')!.appendChild(netStatus);
+let shownStatus: string | null = null;
 const audio = new AudioEngine();
 const features: Features = { ...PRESETS[settings.preset] };
 let tierOverride: number | null = params.has('tier') ? Number(params.get('tier')) : null;
@@ -164,6 +169,7 @@ function memoryLine(): string {
 
 function titleScreen(): void {
   endSession();
+  closeNetwork();
   screen = 'title';
   menuReturn = titleScreen;
   const found = new Persistence(store).data.story.found.length;
@@ -314,6 +320,10 @@ const friendsHost: FriendsHost = {
   store,
   runConfig,
   begin: (s) => beginRun(s),
+  leaveRun: () => {
+    endSession();
+    screen = 'menu';
+  },
   back: () => titleScreen(),
   setScreen: () => {
     screen = 'menu';
@@ -321,9 +331,9 @@ const friendsHost: FriendsHost = {
 };
 
 function friendsScreen(): void {
-  audio.start();
+  if (!params.has('mute')) audio.start();
   screen = 'menu';
-  openFriends(friendsHost);
+  void openFriends(friendsHost);
 }
 
 // ------------------------------------------------------------------------- a run
@@ -342,7 +352,11 @@ function beginRun(s: Session): void {
   viewId = s.localId;
   lostAt = -1;
   overAt = -1;
-  designer.bind(sim);
+  if (s.kind === 'client') {
+    // the Director's view reads the real simulation, which lives on the host's machine
+    if (designer.visible) designer.toggle(false);
+    designer.bind(preview);
+  } else designer.bind(sim);
   hud.reset();
   audio.silenceVoices();
   input.clear();
@@ -446,9 +460,11 @@ let introTick: (dt: number) => void = () => {};
 function pauseScreen(): void {
   if (!session) return;
   const live = session.live;
+  const alive = session.sim.player.active;
   screen = 'paused';
   input.enabled = false;
   input.unlock();
+  const leave = session.kind === 'host' ? 'Close the room <small>(ends it for everyone)</small>' : session.kind === 'client' ? 'Leave the room' : 'Back to the title';
   show(`
     <h2>Paused</h2>
     <p class="lede">${live ? 'The others are still in there. So is it.' : 'It does not wait for you. (It does, a little.)'}</p>
@@ -456,30 +472,20 @@ function pauseScreen(): void {
       <button class="go" data-resume>Back in</button>
       <button data-journal>Notebook</button>
       <button data-options>Options</button>
-      <button data-quit>${session.sim.player.active ? 'Leave this life <small>(counts as a death)</small>' : 'Leave the run'}</button>
-      <button data-title>Back to the title</button>
+      ${alive ? '<button data-quit>Leave this life <small>(counts as a death)</small></button>' : ''}
+      <button data-title>${leave}</button>
     </nav>`);
   on('[data-resume]', resume);
   on('[data-journal]', () => journalScreen('tonight'));
   on('[data-options]', () => optionsScreen(pauseScreen, false));
   on('[data-title]', () => {
-    if (session?.kind === 'solo' && session.sim.phase === 'playing' && session.sim.player.active) session.sim.player.die('You stopped.');
+    if (session?.kind === 'solo') session.forfeit();
     titleScreen();
   });
   on('[data-quit]', () => {
-    if (!session) return;
-    if (session.sim.player.active) {
-      forfeit();
-      resume(); // let the loop run so the death plays out and the end screen appears
-    } else titleScreen();
+    session?.forfeit();
+    resume(); // let the loop run so the death plays out and the end screen appears
   });
-}
-
-function forfeit(): void {
-  if (!session) return;
-  const s = session as Session & { forfeit?: () => void };
-  if (s.forfeit) s.forfeit();
-  else session.sim.player.die('You stopped.');
 }
 
 function resume(): void {
@@ -553,7 +559,7 @@ function overScreen(): void {
       ? '<button class="go" data-go>Someone else goes in</button>'
       : session.kind === 'host'
         ? '<button class="go" data-lobby>Back to the lobby</button>'
-        : '<button class="go" data-lobby>Wait for the next run</button>';
+        : '<button class="go" data-lobby>Back to the room</button>';
   show(
     `
     <h1 class="${me.escaped ? '' : 'red'} ${ending.trueEnding ? 'true' : ''}">${esc(ending.title)}</h1>
@@ -564,10 +570,7 @@ function overScreen(): void {
     `over${ending.trueEnding ? ' true' : ''}`,
   );
   on('[data-go]', () => startSolo());
-  on('[data-lobby]', () => {
-    const s = session as Session & { toLobby?: () => void };
-    s.toLobby?.();
-  });
+  on('[data-lobby]', () => session?.toLobby?.());
   on('[data-title]', () => titleScreen());
 }
 
@@ -590,6 +593,11 @@ function bindInput(): void {
   input.onKey = (code, e) => {
     if (code === 'F1' || code === 'Backquote') {
       e.preventDefault();
+      // the Director's view reads the real simulation, which a guest does not have
+      if (session?.kind === 'client') {
+        hud.notice("The Director's view is on the host's machine.", 3);
+        return;
+      }
       designer.toggle();
       settings.designer = designer.visible;
       persist();
@@ -626,8 +634,35 @@ function bindInput(): void {
     if (document.hidden) {
       if (session?.kind === 'solo' && screen === 'playing') pauseScreen();
       if (!session?.live) audio.suspend();
-    } else audio.resume();
+      ticker?.postMessage(1);
+    } else {
+      ticker?.postMessage(0);
+      audio.resume();
+    }
   });
+}
+
+/**
+ * A hidden tab gets no animation frames. Alone, the game pauses; with friends in the run it
+ * must not (a host whose tab is hidden would freeze everyone), so a worker's timer keeps the
+ * run stepping, without drawing, until the tab is back.
+ */
+let ticker: Worker | null = null;
+function startTicker(): void {
+  try {
+    const src = 'let id = 0; onmessage = (e) => { clearInterval(id); if (e.data) id = setInterval(() => postMessage(0), 20); };';
+    ticker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    ticker.onmessage = () => {
+      if (!document.hidden || !session?.live) return;
+      const now = performance.now();
+      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+      last = now;
+      wall += dt;
+      session.tick(dt, null);
+    };
+  } catch {
+    ticker = null;
+  }
 }
 
 /** Once you are out (dead or through the gate), watch whoever is still inside. */
@@ -693,7 +728,16 @@ function frame(now: number): void {
     hud.update(sim, dt, { viewId, localId: s.localId });
     audio.update(sim, dt, viewId);
     if (screen === 'intro') introTick(dt);
+    if (s.status !== shownStatus) {
+      shownStatus = s.status;
+      netStatus.textContent = s.status ?? '';
+      netStatus.hidden = !s.status;
+    }
   } else {
+    if (shownStatus) {
+      shownStatus = null;
+      netStatus.hidden = true;
+    }
     // Attract mode: the camera breathes in the reception while the title is up.
     const pl = preview.player;
     pl.angle = -Math.PI / 2 + Math.sin(wall * 0.045) * 0.75;
@@ -721,6 +765,7 @@ async function boot(): Promise<void> {
   requestAnimationFrame(frame);
   view = await makeView(progress);
   bindInput();
+  startTicker();
   designer = new DesignerPanel(document.querySelector('#designer')!, {
     newRun: () => startSolo(),
     resetMemory: () => {

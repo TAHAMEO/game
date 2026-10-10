@@ -1,6 +1,12 @@
+import type { InputState } from '../core/input';
 import type { Sim } from '../core/sim';
 import type { GameEvent } from '../core/types';
-import type { InputController } from '../ui/input';
+
+/** Where a session's own player's input comes from (the keyboard and mouse, or a test). */
+export interface InputSource {
+  /** Everything since the last call, split into `steps` fixed steps. */
+  frame(dt: number, steps: number): InputState[];
+}
 
 /** The simulation's fixed step. */
 export const STEP = 1 / 60;
@@ -20,9 +26,13 @@ export interface Session {
   /** The run keeps going while you are in a menu (it does when other people are in it). */
   readonly live: boolean;
   /** Advance by `dt` real seconds; returns the presentation events for this machine. */
-  tick(dt: number, input: InputController | null): GameEvent[];
+  tick(dt: number, input: InputSource | null): GameEvent[];
   /** Something to tell the player about the connection (null when all is well). */
   readonly status: string | null;
+  /** Give up this life (it counts as a death). */
+  forfeit(): void;
+  /** Shared runs: back to the room you came from, still connected. */
+  toLobby?(): void;
   dispose(): void;
 }
 
@@ -48,10 +58,14 @@ export class SoloSession implements Session {
 
   constructor(readonly sim: Sim) {}
 
-  tick(dt: number, input: InputController | null): GameEvent[] {
+  tick(dt: number, input: InputSource | null): GameEvent[] {
     const steps = this.clock.steps(dt);
     if (input) for (const inp of input.frame(dt, steps)) this.sim.step(STEP, inp);
     return this.sim.drainEvents();
+  }
+
+  forfeit(): void {
+    if (this.sim.player.active) this.sim.player.die('You stopped.');
   }
 
   dispose(): void {}

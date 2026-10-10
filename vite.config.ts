@@ -8,6 +8,8 @@ export default defineConfig({
     target: 'es2022',
     outDir: 'dist',
     assetsInlineLimit: 0,
+    // one bundle on purpose (three.js is most of it): `build:single` inlines it into one file
+    chunkSizeWarningLimit: 1600,
   },
   test: {
     include: env.CAMPAIGN ? ['tests/campaign.sim.ts'] : ['tests/**/*.test.ts'],

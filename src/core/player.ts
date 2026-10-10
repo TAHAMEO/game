@@ -3,7 +3,7 @@ import { Perception } from './director/perception';
 import { StressModel } from './director/stress';
 import { LOCK_LABELS } from './hospital';
 import type { InputState } from './input';
-import { cellAt, cellCenter, isStaticOpaque, Tile } from './level';
+import { cellAt, cellCenter, isStaticOpaque, Tile, type Level } from './level';
 import { angleDiff, angleTo, approach, clamp01, dist, lerp, wrapAngle, type Vec2 } from './math';
 import type { Sim } from './sim';
 import type { DoorState, Gate, HidingSpot, Item, Prop, Tap } from './types';
@@ -213,38 +213,7 @@ export class Player {
 
   private updateMovement(dt: number, input: InputState): void {
     const sim = this.sim;
-    if (this.stamina <= 0.01) this.exhausted = true;
-    if (this.exhausted && this.stamina > 0.35) this.exhausted = false;
-    const moving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
-    this.sprinting = input.sprint && input.forward > 0.1 && !this.crouching && !this.exhausted && moving;
-    let speed = this.crouching ? P.crouchSpeed : this.sprinting ? P.sprintSpeed : P.walkSpeed;
-    if (this.wounded) speed *= 0.95;
-    const f = this.dir;
-    const r = { x: Math.cos(this.angle + Math.PI / 2), y: Math.sin(this.angle + Math.PI / 2) };
-    let wx = f.x * input.forward + r.x * input.strafe;
-    let wy = f.y * input.forward + r.y * input.strafe;
-    const wl = Math.hypot(wx, wy);
-    if (wl > 1) {
-      wx /= wl;
-      wy /= wl;
-    }
-    const accel = 14 * dt;
-    this.vel.x = approach(this.vel.x, wx * speed, accel * Math.max(1, speed));
-    this.vel.y = approach(this.vel.y, wy * speed, accel * Math.max(1, speed));
-    const before = { ...this.pos };
-    this.tryMove(this.vel.x * dt, 0);
-    this.tryMove(0, this.vel.y * dt);
-    const moved = dist(before, this.pos);
-    this.speed = moved / Math.max(dt, 1e-4);
-
-    if (this.sprinting && this.speed > 0.5) {
-      this.stamina = Math.max(0, this.stamina - P.staminaDrain * dt);
-      this.exertion = Math.min(1, this.exertion + dt * 0.22);
-    } else {
-      this.stamina = Math.min(1, this.stamina + P.staminaRegen * dt * (this.speed < 0.2 ? 1.5 : 1));
-      this.exertion = Math.max(0, this.exertion - dt * 0.07);
-    }
-
+    const moved = moveBody(this, input, dt, sim.level, sim.world);
     this.stepAccum += moved;
     const stride = this.crouching ? 0.62 : this.sprinting ? 1.05 : 0.8;
     if (this.stepAccum >= stride) {
@@ -252,28 +221,6 @@ export class Player {
       const loud = this.crouching ? L.stepCrouch : this.sprinting ? L.stepSprint : L.stepWalk;
       sim.emitNoise('step', this.pos, loud + (this.wounded ? 3 : 0), 'player', { player: this.id });
     }
-    this.bob += moved * (this.sprinting ? 7 : 5.5);
-    const targetEye = this.crouching ? 0.33 : 0.5;
-    this.eye = approach(this.eye, targetEye, dt * 1.5);
-  }
-
-  private tryMove(dx: number, dy: number): void {
-    const nx = this.pos.x + dx;
-    const ny = this.pos.y + dy;
-    const r = P.radius;
-    const world = this.sim.world;
-    const lvl = this.sim.level;
-    for (const [ox, oy] of [
-      [-r, -r],
-      [r, -r],
-      [-r, r],
-      [r, r],
-    ] as const) {
-      const c = cellAt(lvl, { x: nx + ox, y: ny + oy });
-      if (world.isSolid(c)) return;
-    }
-    this.pos.x = nx;
-    this.pos.y = ny;
   }
 
   // ------------------------------------------------------------- breath [I, V]
@@ -808,4 +755,80 @@ export class Player {
   escape(): void {
     if (this.active) this.sim.onEscape(this);
   }
+}
+
+/** The parts of a player that walking moves. */
+export interface Body {
+  pos: Vec2;
+  vel: Vec2;
+  angle: number;
+  speed: number;
+  crouching: boolean;
+  sprinting: boolean;
+  exhausted: boolean;
+  stamina: number;
+  exertion: number;
+  wounded: boolean;
+  bob: number;
+  eye: number;
+}
+
+/**
+ * One step of walking: speed, stamina, collision, head bob. Shared by the simulation and by
+ * a guest in a shared run predicting their own body between the host's snapshots, so both
+ * move a body by exactly the same rules. Returns the distance moved.
+ */
+export function moveBody(b: Body, input: InputState, dt: number, level: Level, world: { isSolid(cell: number): boolean }): number {
+  if (b.stamina <= 0.01) b.exhausted = true;
+  if (b.exhausted && b.stamina > 0.35) b.exhausted = false;
+  const moving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
+  b.sprinting = input.sprint && input.forward > 0.1 && !b.crouching && !b.exhausted && moving;
+  let speed = b.crouching ? P.crouchSpeed : b.sprinting ? P.sprintSpeed : P.walkSpeed;
+  if (b.wounded) speed *= 0.95;
+  const f = { x: Math.cos(b.angle), y: Math.sin(b.angle) };
+  const r = { x: Math.cos(b.angle + Math.PI / 2), y: Math.sin(b.angle + Math.PI / 2) };
+  let wx = f.x * input.forward + r.x * input.strafe;
+  let wy = f.y * input.forward + r.y * input.strafe;
+  const wl = Math.hypot(wx, wy);
+  if (wl > 1) {
+    wx /= wl;
+    wy /= wl;
+  }
+  const accel = 14 * dt;
+  b.vel.x = approach(b.vel.x, wx * speed, accel * Math.max(1, speed));
+  b.vel.y = approach(b.vel.y, wy * speed, accel * Math.max(1, speed));
+  const before = { ...b.pos };
+  tryMove(b, b.vel.x * dt, 0, level, world);
+  tryMove(b, 0, b.vel.y * dt, level, world);
+  const moved = dist(before, b.pos);
+  b.speed = moved / Math.max(dt, 1e-4);
+
+  if (b.sprinting && b.speed > 0.5) {
+    b.stamina = Math.max(0, b.stamina - P.staminaDrain * dt);
+    b.exertion = Math.min(1, b.exertion + dt * 0.22);
+  } else {
+    b.stamina = Math.min(1, b.stamina + P.staminaRegen * dt * (b.speed < 0.2 ? 1.5 : 1));
+    b.exertion = Math.max(0, b.exertion - dt * 0.07);
+  }
+  b.bob += moved * (b.sprinting ? 7 : 5.5);
+  const targetEye = b.crouching ? 0.33 : 0.5;
+  b.eye = approach(b.eye, targetEye, dt * 1.5);
+  return moved;
+}
+
+function tryMove(b: Body, dx: number, dy: number, level: Level, world: { isSolid(cell: number): boolean }): void {
+  const nx = b.pos.x + dx;
+  const ny = b.pos.y + dy;
+  const r = P.radius;
+  for (const [ox, oy] of [
+    [-r, -r],
+    [r, -r],
+    [-r, r],
+    [r, r],
+  ] as const) {
+    const c = cellAt(level, { x: nx + ox, y: ny + oy });
+    if (world.isSolid(c)) return;
+  }
+  b.pos.x = nx;
+  b.pos.y = ny;
 }
