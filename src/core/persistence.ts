@@ -135,7 +135,8 @@ export class BrowserStore implements KVStore {
   }
 }
 
-const KEY = 'the-quiet.save.v1';
+export const SAVE_KEY = 'the-quiet.save.v1';
+const KEY = SAVE_KEY;
 
 export class Persistence {
   data: SaveData;

@@ -33,12 +33,22 @@ body {
 }
 
 #view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+  cursor: crosshair;
+}
+
+/* The old software raycaster (no WebGL2): low resolution on purpose, letterboxed 16:9. */
+#view.retro {
+  position: static;
   width: min(100vw, calc(100vh * 16 / 9));
   height: min(100vh, calc(100vw * 9 / 16));
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  background: #000;
-  cursor: crosshair;
 }
 
 /* ------------------------------------------------------------------ HUD */
@@ -394,4 +404,526 @@ button.go {
   .controls span:nth-child(n + 7) {
     display: none;
   }
+}
+
+/* ================================================================== HD presentation */
+
+/* ------------------------------------------------------------------ loading */
+
+.loading {
+  pointer-events: auto;
+  text-align: center;
+  width: min(520px, calc(100vw - 32px));
+}
+
+.loading h1 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(36px, 8vw, 64px);
+  letter-spacing: 0.3em;
+  margin: 0 0 8px;
+}
+
+.load-bar {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 18px auto;
+  width: 70%;
+}
+
+.load-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+/* ------------------------------------------------------------------ title, over the live building */
+
+#screens:has(.screen.title) {
+  place-items: center start;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.55) 38%, rgba(0, 0, 0, 0) 70%);
+}
+
+.screen.title {
+  background: none;
+  border: 0;
+  text-align: left;
+  margin-left: clamp(16px, 7vw, 120px);
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.screen.title h1 {
+  letter-spacing: 0.24em;
+  text-shadow: 0 0 30px rgba(0, 0, 0, 0.9);
+}
+
+.screen.title .controls {
+  justify-content: flex-start;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 18px 0;
+  max-width: 340px;
+}
+
+.screen:not(.title) .menu {
+  margin: 18px auto;
+}
+
+.menu button {
+  text-align: left;
+  margin: 0;
+  padding: 9px 16px;
+  background: rgba(10, 10, 10, 0.7);
+  letter-spacing: 0.06em;
+}
+
+.menu button small {
+  color: var(--dim);
+  margin-left: 8px;
+}
+
+.menu button.go {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.screen.wide {
+  width: min(860px, calc(100vw - 32px));
+  max-width: none;
+}
+
+/* ------------------------------------------------------------------ options */
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 26px;
+  text-align: left;
+}
+
+.options h3,
+.journal h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--line);
+  margin: 14px 0 8px;
+}
+
+.options label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 7px 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.options label:has(input[type='checkbox']) {
+  justify-content: flex-start;
+}
+
+.options input[type='range'] {
+  width: 52%;
+  accent-color: var(--accent);
+}
+
+.options select {
+  font: inherit;
+  color: var(--ink);
+  background: #111;
+  border: 1px solid #444;
+  padding: 2px 6px;
+}
+
+/* ------------------------------------------------------------------ case file, notebook */
+
+.tabs {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin: 6px 0 10px;
+}
+
+.tabs .tab {
+  margin: 0;
+  color: var(--dim);
+}
+
+.tabs .tab.on {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.casefile {
+  text-align: left;
+  font-family: var(--type);
+  font-size: 14px;
+  max-height: 58vh;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.casefile article {
+  background: #d9d1bd;
+  color: #2b2620;
+  padding: 12px 16px;
+  margin: 0 0 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+}
+
+.casefile article:nth-child(odd) {
+  transform: rotate(-0.4deg);
+}
+
+.casefile article:nth-child(even) {
+  transform: rotate(0.3deg);
+}
+
+.casefile article h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.casefile article h3 span {
+  display: inline-block;
+  min-width: 26px;
+  color: #7a1a14;
+}
+
+.casefile article p {
+  margin: 0;
+}
+
+.casefile article.missing {
+  background: rgba(255, 255, 255, 0.03);
+  color: #5a5750;
+  box-shadow: none;
+  border: 1px dashed #333;
+  transform: none;
+}
+
+.casefile article.missing h3 span {
+  color: #5a5750;
+}
+
+/* ------------------------------------------------------------------ intro */
+
+.intro {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: #000;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  animation: fadein 1.2s ease-out;
+}
+
+.intro-lines {
+  width: min(720px, calc(100vw - 48px));
+  font-family: var(--type);
+  font-size: clamp(16px, 2.2vw, 21px);
+  line-height: 1.6;
+}
+
+.intro-lines p {
+  margin: 0 0 18px;
+  min-height: 1.6em;
+  transition: color 1.5s;
+}
+
+.intro-lines p.old {
+  color: #6d6a62;
+}
+
+.intro-lines p:first-child {
+  font-family: var(--display);
+  letter-spacing: 0.18em;
+}
+
+.intro-hint {
+  position: absolute;
+  bottom: 7%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: #4a4740;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+}
+
+.intro-hint.ready {
+  color: var(--ink);
+  font-size: 16px;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ------------------------------------------------------------------ over */
+
+.screen.over {
+  background: rgba(0, 0, 0, 0.82);
+  animation: fadein 2.4s ease-out;
+}
+
+.screen.over.true {
+  background: rgba(236, 234, 228, 0.94);
+  color: #1d1c1a;
+  border-color: #ccc;
+}
+
+.screen.over.true .memory,
+.screen.over.true .fine {
+  color: #55524c;
+}
+
+.screen.over.true button {
+  color: #1d1c1a;
+  background: #f4f2ee;
+  border-color: #999;
+}
+
+.fates {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 16px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.fates .dead {
+  color: var(--red);
+}
+
+.fates .out {
+  color: #9fb79a;
+}
+
+/* ------------------------------------------------------------------ HUD: crosshair, team, spectating */
+
+.hud-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: rgba(230, 226, 214, 0.32);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.hud-cross.on {
+  background: rgba(240, 236, 224, 0.85);
+  transform: scale(1.7);
+}
+
+.hud-cross.off {
+  opacity: 0;
+}
+
+.hud-team {
+  position: absolute;
+  left: 3%;
+  top: 4%;
+  font: 12px ui-monospace, monospace;
+  color: rgba(216, 212, 200, 0.6);
+  text-shadow: 0 0 4px #000;
+}
+
+.hud-team div {
+  margin: 2px 0;
+}
+
+.hud-team .me {
+  color: rgba(216, 212, 200, 0.9);
+}
+
+.hud-team i {
+  font-style: normal;
+  color: rgba(216, 212, 200, 0.4);
+}
+
+.hud-team .dead {
+  color: rgba(179, 58, 46, 0.75);
+  text-decoration: line-through;
+}
+
+.hud-team .out {
+  color: rgba(159, 183, 154, 0.75);
+}
+
+.hud-spectate {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  transform: translateX(-50%);
+  padding: 4px 14px;
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 15px;
+  color: var(--dim);
+  text-shadow: 0 0 6px #000;
+  white-space: nowrap;
+}
+
+.hud-spectate b {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.hud-spectate span {
+  margin-left: 10px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ HUD: what the building shows you */
+
+.hud-vision {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 0 8vw;
+  background: radial-gradient(ellipse at center, rgba(255, 252, 240, 0.08), rgba(0, 0, 0, 0) 60%);
+}
+
+.hud-vision .vz-zone {
+  font-family: var(--display);
+  letter-spacing: 0.4em;
+  font-size: 13px;
+  color: rgba(40, 32, 26, 0.75);
+  margin-bottom: 20px;
+  text-transform: uppercase;
+}
+
+.hud-vision p {
+  margin: 0 auto 14px;
+  max-width: 760px;
+  font-family: var(--display);
+  font-size: clamp(18px, 2.6vw, 28px);
+  color: #1a120e;
+  text-shadow: 0 0 12px rgba(255, 250, 235, 0.95), 0 0 30px rgba(255, 250, 235, 0.6);
+  transition: opacity 0.3s;
+}
+
+.hud-whisper {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--display);
+  font-style: italic;
+  font-size: clamp(16px, 2vw, 22px);
+  letter-spacing: 0.3em;
+  color: rgba(200, 196, 186, 0.7);
+  text-shadow: 0 0 8px #000, 0 0 2px #000;
+  opacity: 0;
+  filter: blur(0.4px);
+  animation: drift 4s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+@keyframes drift {
+  50% {
+    letter-spacing: 0.42em;
+    filter: blur(1.2px);
+  }
+}
+
+.hud-found {
+  position: absolute;
+  right: 3%;
+  top: 6%;
+  max-width: 320px;
+  padding: 10px 14px;
+  background: rgba(217, 209, 189, 0.92);
+  color: #2b2620;
+  font-family: var(--type);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7);
+  transform: rotate(0.8deg);
+  opacity: 0;
+}
+
+.hud-found small {
+  display: block;
+  color: #6b6255;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-found b {
+  display: block;
+  margin: 3px 0;
+  font-size: 14px;
+}
+
+.hud-record {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(0.7deg);
+  width: min(540px, 88vw);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 18px 26px 16px;
+  background: #ddd4bd;
+  background-image: repeating-linear-gradient(0deg, rgba(60, 40, 20, 0.04) 0 1px, transparent 1px 26px);
+  color: #2b2620;
+  box-shadow: 0 12px 50px rgba(0, 0, 0, 0.85), inset 0 0 60px rgba(120, 90, 50, 0.25);
+  font-family: var(--type);
+  font-size: 15px;
+}
+
+.rec-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6b6255;
+  border-bottom: 1px solid rgba(43, 38, 32, 0.3);
+  padding-bottom: 6px;
+}
+
+.rec-head span:last-child {
+  color: #8a1a12;
+  border: 1px solid #8a1a12;
+  padding: 0 6px;
+  transform: rotate(-3deg);
+}
+
+.hud-record h3 {
+  margin: 12px 0 8px;
+  font-size: 17px;
+}
+
+.rec-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 12px;
+  font-size: 11px;
+  color: #6b6255;
 }

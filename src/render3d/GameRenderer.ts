@@ -73,6 +73,8 @@ export class GameRenderer {
   private readonly up = new THREE.Vector3(0, 1, 0);
   /** Exposure, eased (visions brighten the frame). */
   private exposure = 1.05;
+  /** The player's brightness setting (a multiplier on exposure). */
+  brightness = 1;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -480,7 +482,7 @@ export class GameRenderer {
     u.uWarp.value = pl.exertion * 0.4;
     u.uGrain.value = 0.065;
     this.exposure += ((vision > 0 ? 1.9 : 1.05) - this.exposure) * (1 - Math.exp(-dt * 3));
-    this.renderer.toneMappingExposure = this.exposure;
+    this.renderer.toneMappingExposure = this.exposure * this.brightness;
     void sim;
   }
 

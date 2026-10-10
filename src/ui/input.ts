@@ -18,22 +18,29 @@ const GAME_KEYS = new Set([
   'KeyG',
   'Space',
   'KeyQ',
+  'PageUp',
+  'PageDown',
 ]);
 
 /**
- * Keyboard + mouse. Mouse-look uses pointer lock when the page allows it; the arrow
- * keys (and Q/E-free turning with ←/→) work everywhere, including sandboxed iframes.
+ * Keyboard + mouse. Mouse-look (both axes) uses pointer lock when the page allows it; the
+ * arrow keys turn and PageUp/PageDown look up and down everywhere, including sandboxed
+ * iframes.
  */
 export class InputController {
   private keys = new Set<string>();
   private edges = new Set<string>();
   private mouseDX = 0;
+  private mouseDY = 0;
   /** Turning gathered on frames that ran no fixed step (fast displays), applied on the next one. */
   private pendingTurn = 0;
+  private pendingPitch = 0;
   private rightClick = false;
   crouchToggled = false;
   sensitivity = 0.0024;
   invertTurn = false;
+  /** Mouse up looks down (flight-stick style). */
+  invertY = false;
   enabled = false;
   /** Fired for non-game keys (menus, overlays). */
   onKey: (code: string, e: KeyboardEvent) => void = () => {};
@@ -55,7 +62,10 @@ export class InputController {
     });
     window.addEventListener('blur', () => this.keys.clear());
     document.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === this.target && this.enabled) this.mouseDX += e.movementX;
+      if (document.pointerLockElement === this.target && this.enabled) {
+        this.mouseDX += e.movementX ?? 0;
+        this.mouseDY += e.movementY ?? 0;
+      }
     });
     target.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
@@ -89,7 +99,9 @@ export class InputController {
     if (!this.enabled) {
       this.edges.clear();
       this.mouseDX = 0;
+      this.mouseDY = 0;
       this.pendingTurn = 0;
+      this.pendingPitch = 0;
       this.rightClick = false;
       return Array.from({ length: steps }, () => ({ ...base }));
     }
@@ -100,15 +112,21 @@ export class InputController {
     base.interact = k.has('KeyE');
     base.holdBreath = k.has('Space');
     const keyTurn = ((k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)) * 2.4 * dt;
+    const keyPitch = ((k.has('PageUp') ? 1 : 0) - (k.has('PageDown') ? 1 : 0)) * 1.6 * dt;
     // At 120 Hz and up most frames run no step; keep their turning instead of dropping it.
     this.pendingTurn += this.mouseDX * this.sensitivity + keyTurn;
+    // Mouse up (negative movementY) looks up.
+    this.pendingPitch += -this.mouseDY * this.sensitivity * (this.invertY ? -1 : 1) + keyPitch;
     this.mouseDX = 0;
+    this.mouseDY = 0;
     if (steps === 0) return [];
     const turn = this.invertTurn ? -this.pendingTurn : this.pendingTurn;
+    const pitch = this.pendingPitch;
     this.pendingTurn = 0;
+    this.pendingPitch = 0;
     const out: InputState[] = [];
     for (let i = 0; i < steps; i++) {
-      const s = { ...base, turn: turn / Math.max(1, steps) };
+      const s = { ...base, turn: turn / Math.max(1, steps), pitch: pitch / Math.max(1, steps) };
       if (i === 0) {
         s.interactPressed = this.edges.has('KeyE');
         s.flashlightPressed = this.edges.has('KeyF');
@@ -125,6 +143,13 @@ export class InputController {
     this.keys.clear();
     this.edges.clear();
     this.mouseDX = 0;
+    this.mouseDY = 0;
     this.pendingTurn = 0;
+    this.pendingPitch = 0;
+  }
+
+  /** Is a key held right now (for menus that peek, like push-to-talk). */
+  held(code: string): boolean {
+    return this.keys.has(code);
   }
 }
