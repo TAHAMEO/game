@@ -169,6 +169,15 @@ export class AudioEngine {
     }
   }
 
+  /** Drop queued speech, so voices from the last life don't follow you into the next. */
+  silenceVoices(): void {
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      /* speech unavailable */
+    }
+  }
+
   private speak(text: string, voice: VoiceSig | undefined, volume: number, radio: boolean): void {
     const synth = window.speechSynthesis;
     if (!synth) return;

@@ -103,6 +103,7 @@ function startRun(): void {
   input.enabled = true;
   input.crouchToggled = false;
   input.clear();
+  audio.silenceVoices();
   if (!params.has('mute')) audio.start();
   input.lock();
   (window as unknown as { __quiet: unknown }).__quiet = { sim, renderer, designer };
