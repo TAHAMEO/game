@@ -62,6 +62,7 @@ export class Player {
   channel: Channel | null = null;
   focus: Focus | null = null;
   readingNote: number | null = null;
+  private readingAt: Vec2 = { x: 0, y: 0 };
   bob = 0;
   eye = 0.5;
   lastHurt = -99;
@@ -97,6 +98,10 @@ export class Player {
 
   update(dt: number, input: InputState): void {
     if (!this.alive) return;
+    // Reading holds your eyes, not your feet: walking off, hiding or starting a job puts it down.
+    if (this.readingNote !== null && (this.hidden || this.transition || this.channel || dist(this.pos, this.readingAt) > 0.5)) {
+      this.readingNote = null;
+    }
     this.turnRate = Math.abs(input.turn) / Math.max(dt, 1e-4);
 
     if (input.flashlightPressed) this.toggleFlashlight();
@@ -502,6 +507,7 @@ export class Player {
       const note = sim.world.notes[item.noteId!]!;
       note.read = true;
       this.readingNote = note.id;
+      this.readingAt = { ...this.pos };
       sim.director.onNoteRead(note);
       return;
     }

@@ -122,7 +122,6 @@ export class Hud {
         this.note.innerHTML = `<h3>${esc(n.title)}</h3><p>${esc(n.text)}</p><small>Walk away to put it down.</small>`;
         this.note.hidden = false;
       }
-      if (pl.speed > 0.3 || pl.channel || pl.hidden) pl.readingNote = null;
     } else this.note.hidden = true;
   }
 }
