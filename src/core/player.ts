@@ -145,7 +145,7 @@ export class Player {
     const moving = Math.abs(input.forward) > 0.05 || Math.abs(input.strafe) > 0.05;
     this.sprinting = input.sprint && input.forward > 0.1 && !this.crouching && !this.exhausted && moving;
     let speed = this.crouching ? P.crouchSpeed : this.sprinting ? P.sprintSpeed : P.walkSpeed;
-    if (this.wounded) speed *= 0.92;
+    if (this.wounded) speed *= 0.95;
     const f = this.dir;
     const r = { x: Math.cos(this.angle + Math.PI / 2), y: Math.sin(this.angle + Math.PI / 2) };
     let wx = f.x * input.forward + r.x * input.strafe;

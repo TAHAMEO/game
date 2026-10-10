@@ -2,7 +2,7 @@ import type { Entity } from '../entity';
 import { cellAt, cellCenter, Tile } from '../level';
 import { angleDiff, angleTo, dist, lerp, type Vec2 } from '../math';
 import { findPath } from '../path';
-import type { Plan, PlanKind, PlanStep } from '../plans';
+import type { Plan, PlanKind, PlanOutcome, PlanStep } from '../plans';
 import type { Sim } from '../sim';
 import type { Gate, HidingSpot, Item } from '../types';
 
@@ -23,7 +23,7 @@ export class BaitPlanner {
   cooldownUntil = 50;
   forceNext = false;
   active: Plan | null = null;
-  readonly history: { kind: PlanKind; t: number; ok: boolean; reason: string }[] = [];
+  readonly history: { kind: PlanKind; t: number; outcome: PlanOutcome; reason: string }[] = [];
   private readonly pendingChecks = new Map<number, number>();
   private readonly handledRoutes = new Set<number>();
   private seq = 1;
@@ -160,13 +160,14 @@ export class BaitPlanner {
     return null;
   }
 
-  onFinished(plan: Plan, ok: boolean): void {
+  onFinished(plan: Plan, outcome: PlanOutcome): void {
     if (this.active?.id === plan.id) this.active = null;
-    this.history.push({ kind: plan.kind, t: this.sim.time, ok, reason: plan.reason });
+    this.history.push({ kind: plan.kind, t: this.sim.time, outcome, reason: plan.reason });
     if (this.history.length > 40) this.history.shift();
+    if (outcome === 'sprung') this.sim.log(plan.section, `the ${plan.kind} trap sprang`);
     const practised: Partial<Record<PlanKind, string>> = { herd: 'herd', relocate: 'relocate', offer: 'offer', funnel: 'funnel', mimic: 'mimic' };
     const key = practised[plan.kind];
-    if (ok && key && this.sim.memory.learn(key)) this.sim.log('K', `it has practised ${plan.kind} (the nest will show it)`);
+    if ((outcome === 'done' || outcome === 'sprung') && key && this.sim.memory.learn(key)) this.sim.log('K', `it has practised ${plan.kind} (the nest will show it)`);
   }
 
   /** Start a plan right now (used for corrupted objectives [U]). */
@@ -174,7 +175,7 @@ export class BaitPlanner {
     const sim = this.sim;
     const k = sim.entity.stateKind;
     if (k === 'chase' || k === 'lunge' || k === 'kill') return;
-    if (this.active) sim.director.onPlanFinished(this.active, false);
+    if (this.active) sim.director.onPlanFinished(this.active, 'interrupted');
     this.active = plan;
     sim.log(plan.section, `plan: ${plan.kind} — ${plan.reason}`);
     sim.entity.startPlan(plan);

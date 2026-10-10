@@ -29,6 +29,8 @@ const LABELS: Record<FeatureKey, string> = {
   risingFloor: 'Rising floor',
 };
 
+const OUTCOME: Record<string, string> = { done: '✓', sprung: '⚡', interrupted: '·', aborted: '✗' };
+
 const TAG_COLORS: Record<string, string> = {
   S: '#e07bff',
   T: '#ff9f43',
@@ -302,7 +304,7 @@ export class DesignerPanel {
       <div>dismantled: ${counters.length ? counters.map((c) => c.slice(8)).join(', ') : 'nothing yet'}</div>
       <div class="dz-k" style="color:${TAG_COLORS.T}">T · bait economy</div>
       <div>${plan ? `<b>${plan.kind}</b> — ${plan.reason}` : `no active plan (next in ${Math.max(0, d.bait.cooldownUntil - sim.time).toFixed(0)}s)`}</div>
-      <div><small>${d.bait.history.slice(-6).map((h) => `${h.kind}${h.ok ? '✓' : '✗'}`).join(' ')}</small></div>
+      <div><small>${d.bait.history.slice(-6).map((h) => `${h.kind}${OUTCOME[h.outcome]}`).join(' ')}</small> <small style="color:#666">(✓ done ⚡ sprung · interrupted ✗ aborted)</small></div>
       <div class="dz-k" style="color:${TAG_COLORS.V}">V · scent, heat & the mark</div>
       <div>warm prints ${sim.world.thermal.length} · breath puffs ${sim.world.fog.length} · ${pl.isMarked ? `<b>MARKED</b> ${(pl.markedUntil - sim.time).toFixed(0)}s` : 'unmarked'}</div>
       <div class="dz-k" style="color:${TAG_COLORS.U}">U · objectives</div>

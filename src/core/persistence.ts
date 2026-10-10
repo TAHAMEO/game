@@ -47,7 +47,8 @@ export interface SaveData {
   journal: string[];
 }
 
-export const TIER_XP = [0, 3, 8, 15, 25] as const;
+/** Knowledge tiers by experience. A death is worth 3, an escape 3, a survived encounter 0.5. */
+export const TIER_XP = [0, 4, 10, 18, 30] as const;
 
 export function emptySave(): SaveData {
   return {

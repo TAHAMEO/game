@@ -2,7 +2,7 @@ import type { Entity, EntityState, Tell, TellKind } from '../entity';
 import { cellAt, cellCenter, Tile } from '../level';
 import { clamp01, dist, lerp, type Vec2 } from '../math';
 import { distanceField } from '../path';
-import type { Plan } from '../plans';
+import type { Plan, PlanOutcome } from '../plans';
 import type { Sim } from '../sim';
 import type { DoorState, HidingSpot, Item, Noise, Note, Prop, ThermalMark } from '../types';
 import { World } from '../world';
@@ -44,7 +44,7 @@ export class Director {
   private punishedHide: HidingSpot | null = null;
   private lastEntityHeard = -99;
   private runXpFromEscapes = 0;
-  private relaxDur = 25;
+  private relaxDur = 45;
 
   constructor(private readonly sim: Sim) {
     this.profile = new Profile(sim);
@@ -102,6 +102,7 @@ export class Director {
     this.bait.update();
     this.pacing(dt, threat);
     this.punishingPause();
+    this.chaseMercy(dt);
     this.considerPlans();
   }
 
@@ -150,7 +151,7 @@ export class Director {
         if (this.phaseT > this.relaxDur) this.setPhase('build', 'the quiet is over');
         break;
       case 'build':
-        if (this.phaseT > lerp(55, 15, floor) || this.menace > 0.6) this.setPhase('peak', 'pressure builds');
+        if (this.phaseT > lerp(75, 15, floor) || this.menace > 0.6) this.setPhase('peak', 'pressure builds');
         break;
       case 'peak':
         if ((this.menace > 0.9 && ent.stateKind !== 'chase') || this.phaseT > lerp(70, 110, floor)) {
@@ -167,6 +168,30 @@ export class Director {
     this.phaseT = 0;
     if (p === 'relax') this.menace *= 0.4;
     this.sim.log('director', `phase → ${p} (${why})`);
+  }
+
+  private chaseFor = 0;
+
+  /**
+   * A chase is a set piece the Director paces, not a race to the death: after a while
+   * the Entity breaks off — with the slow turn, which may itself be a feint [Y]. The
+   * debt shortens the leash [Z]: late in a run, chases last much longer.
+   */
+  private chaseMercy(dt: number): void {
+    const sim = this.sim;
+    const ent = sim.entity;
+    const k = ent.stateKind;
+    if (k !== 'chase' && k !== 'lunge') {
+      this.chaseFor = 0;
+      return;
+    }
+    this.chaseFor += dt;
+    const leash = lerp(14, 34, this.floor);
+    if (k === 'chase' && this.chaseFor > leash && dist(ent.pos, sim.player.pos) > 2) {
+      this.chaseFor = 0;
+      sim.log('director', `chase called off after ${leash.toFixed(0)}s (the leash grows with the debt)`);
+      ent.startLeave(true, 'it slows — and lets you go. This time.');
+    }
   }
 
   /** J: the punishing pause. Hiding too long draws it in. */
@@ -235,7 +260,7 @@ export class Director {
 
   roamBias(): number {
     if (this.sim.time < this.stalkUntil) return 1;
-    return clamp01(0.2 + 0.7 * this.floor + 0.35 * this.stress.value);
+    return clamp01(0.12 + 0.75 * this.floor + 0.35 * this.stress.value);
   }
 
   roamTarget(): number {
@@ -360,7 +385,7 @@ export class Director {
     if (spot.occupant?.kind === 'survivor') s += 0.25;
     if (sim.features.thermalResidue) {
       const m = sim.world.thermal.find((t) => t.cell === spot.cell);
-      if (m) s += 0.9 * World.heatOf(m, sim.time);
+      if (m) s += 0.5 * World.heatOf(m, sim.time);
     }
     if (sim.features.breathFog && sim.world.fog.some((f) => f.spot === spot.id)) s += 0.8;
     if (spot.baited && spot.occupant) s += 1;
@@ -470,8 +495,8 @@ export class Director {
     this.sim.log('X', `you followed ${this.sim.survivors.list[survivor]!.def.name}'s voice`);
   }
 
-  onPlanFinished(plan: Plan, ok: boolean): void {
-    this.bait.onFinished(plan, ok);
+  onPlanFinished(plan: Plan, outcome: PlanOutcome): void {
+    this.bait.onFinished(plan, outcome);
   }
 
   onEscape(): void {

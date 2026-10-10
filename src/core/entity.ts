@@ -108,7 +108,8 @@ export class Entity {
     const nest = sim.level.markers.nest;
     const start = nest.length ? nest[0]! : sim.level.spawn;
     this.pos = cellCenter(sim.level, start);
-    this.state = { kind: 'rest', until: 25 };
+    // The first stretch of a run is genuinely quiet [Z].
+    this.state = { kind: 'rest', until: 45 };
   }
 
   get cell(): number {
@@ -150,7 +151,9 @@ export class Entity {
     if (prevState.kind === 'plan' && prevState !== s && !this.closingPlan) {
       // Perception pulled it off the plan: whatever it was carrying hits the floor.
       this.dropCarried();
-      this.sim.director.onPlanFinished(prevState.plan, false);
+      const step = prevState.plan.steps[prevState.step];
+      const sprung = step?.op === 'ambush' && prevState.arrived && (s.kind === 'chase' || s.kind === 'investigate' || s.kind === 'lunge');
+      this.sim.director.onPlanFinished(prevState.plan, s.kind === 'mimic' ? 'done' : sprung ? 'sprung' : 'interrupted');
     }
     this.state = s;
     this.stateT = 0;
@@ -302,7 +305,8 @@ export class Entity {
     const inFov = Math.abs(angleDiff(this.angle, angleTo(this.pos, pl.pos))) <= this.fov() / 2;
     let vis = 0;
     if (inFov) {
-      const light = sim.world.lighting.sample(pl.pos) + (pl.flashlight.on ? 0.3 : 0);
+      // A lit torch lights you, too: you are a beacon in the dark [S].
+      const light = sim.world.lighting.sample(pl.pos) + (pl.flashlight.on ? 0.2 : 0);
       const lt = smoothstep(0.015, 0.4, light);
       const range = lerp(3.2, E.sightRange, lt) * sim.director.sightMultiplier();
       if (d < range) vis = Math.pow(1 - d / range, 0.7);
@@ -460,7 +464,8 @@ export class Entity {
       const spot = sim.world.spotAt.get(m.cell);
       if (spot && (m.surface === 'locker' || m.surface === 'drawer' || m.surface === 'bed')) {
         const newest = !sim.world.thermal.some((o) => o.t > m.t);
-        if (newest) {
+        // A warm latch is a strong lead, not a certainty: the hotter, the likelier it looks.
+        if (newest && sim.rng.chance(0.3 + 0.6 * World.heatOf(m, sim.time))) {
           this.beginCheck([spot.id], false, 'warm handprints on the latch');
           return;
         }
@@ -766,7 +771,7 @@ export class Entity {
       this.startTell('inhale', E.lungeWindup, false);
       return;
     }
-    if (!sees && sim.time - s.lostAt > 3.2) {
+    if (!sees && sim.time - s.lostAt > 2.6) {
       sim.director.onChaseLost();
       this.hunt(this.lkp ?? pl.pos, 6, 'lost sight of you');
       return;
@@ -982,7 +987,7 @@ export class Entity {
     const step = s.plan.steps[s.step];
     if (!step) {
       this.closingPlan = true;
-      sim.director.onPlanFinished(s.plan, true);
+      sim.director.onPlanFinished(s.plan, 'done');
       this.idleNext('plan complete');
       this.closingPlan = false;
       return;
@@ -1110,7 +1115,7 @@ export class Entity {
   private abortPlan(plan: Plan, why: string): void {
     this.dropCarried();
     this.closingPlan = true;
-    this.sim.director.onPlanFinished(plan, false);
+    this.sim.director.onPlanFinished(plan, 'aborted');
     this.sim.log('entity', `plan ${plan.kind} aborted: ${why}`);
     this.idleNext('plan aborted');
     this.closingPlan = false;
@@ -1139,7 +1144,7 @@ export class Entity {
       case 'hunt':
         return E.huntSpeed * (1 + 0.15 * floor);
       case 'chase':
-        return E.chaseSpeed + 0.3 * floor;
+        return E.chaseSpeed + 0.35 * floor;
     }
   }
 
@@ -1199,8 +1204,9 @@ export class Entity {
         if (door.target !== 1) {
           door.target = 1;
           const counter = sim.director.counterActive('doors');
-          door.speed = mode === 'chase' || counter ? 0.15 : mode === 'stalk' ? 1.4 : 0.55;
-          const loud = mode === 'chase' || counter ? LOUD.doorBash : mode === 'stalk' ? LOUD.doorQuiet : LOUD.door;
+          // A closed door costs it time — until it learns that you rely on doors [Y].
+          door.speed = counter ? 0.15 : mode === 'chase' ? 0.6 : mode === 'stalk' ? 1.4 : 0.55;
+          const loud = counter ? LOUD.doorBash : mode === 'chase' ? LOUD.door + 8 : mode === 'stalk' ? LOUD.doorQuiet : LOUD.door;
           sim.emitNoise(loud >= LOUD.doorBash ? 'doorBash' : 'door', cellCenter(level, next), loud, 'entity');
         }
         this.angle = turnToward(this.angle, angleTo(this.pos, cellCenter(level, next)), dt * 6);

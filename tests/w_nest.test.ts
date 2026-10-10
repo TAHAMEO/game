@@ -46,11 +46,11 @@ describe('W. The nest — what it keeps', () => {
 
   it('keeps your own remains once it knows you well enough', () => {
     const last = { name: 'Nurse A. Okafor', run: 5, cell: 0, zone: 'Main Hall', cause: 'It caught you in the open.', spot: null };
-    const early = makeSim({ seed: 52, store: storeWith({ runs: 5, xp: 3, lastCharacter: last }) });
+    const early = makeSim({ seed: 52, store: storeWith({ runs: 5, xp: 5, lastCharacter: last }) });
     expect(early.director.tier).toBe(1);
     expect(early.world.props.some((p) => p.kind === 'remains')).toBe(false);
 
-    const late = makeSim({ seed: 52, store: storeWith({ runs: 5, xp: 9, lastCharacter: last }) });
+    const late = makeSim({ seed: 52, store: storeWith({ runs: 5, xp: 11, lastCharacter: last }) });
     expect(late.director.tier).toBe(2);
     const remains = late.world.props.find((p) => p.kind === 'remains');
     const propped = late.world.spots.find((s) => s.body);
@@ -66,7 +66,7 @@ describe('W. The nest — what it keeps', () => {
     for (let seed = 1; seed <= 12 && !found; seed++) {
       const sim = makeSim({
         seed,
-        store: storeWith({ runs: 3, xp: 9, lastCharacter: { name: 'Dr. I. Vance', run: 3, cell: locker.cell, zone: 'x', cause: 'It found you in the locker.', spot: locker.id } }),
+        store: storeWith({ runs: 3, xp: 11, lastCharacter: { name: 'Dr. I. Vance', run: 3, cell: locker.cell, zone: 'x', cause: 'It found you in the locker.', spot: locker.id } }),
       });
       const spot = sim.world.spots[locker.id]!;
       if (spot.body) {
@@ -94,7 +94,7 @@ describe('W. The nest — what it keeps', () => {
     expect(data.trophies.filter((t) => t.label === 'a fuse')).toHaveLength(2);
     expect(data.trophies.some((t) => /torch/.test(t.label))).toBe(true);
     expect(data.lastCharacter?.name).toBe(sim.player.name);
-    expect(data.xp).toBeGreaterThanOrEqual(4);
+    expect(data.xp).toBeGreaterThanOrEqual(3);
     const again = makeSim({ seed: 55, store });
     expect(again.world.props.some((p) => p.kind === 'trophy')).toBe(true);
   });

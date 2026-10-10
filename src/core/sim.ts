@@ -225,7 +225,7 @@ export class Sim {
     const pl = this.player;
     if (outcome === 'death') {
       data.deaths++;
-      this.memory.addXp(4);
+      this.memory.addXp(3);
       const run = this.runNumber;
       data.trophies.push({ kind: 'item', label: `${pl.name.split(' ').pop()}'s torch`, run });
       for (let i = 0; i < pl.inv.fuses; i++) data.trophies.push({ kind: 'item', label: 'a fuse', run });

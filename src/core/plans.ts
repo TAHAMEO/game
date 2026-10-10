@@ -38,6 +38,9 @@ export type PlanKind =
   | 'tapWatch'
   | 'mimic';
 
+/** done: every step performed · sprung: the trap caught you in it · interrupted: something else came up · aborted: impossible. */
+export type PlanOutcome = 'done' | 'sprung' | 'interrupted' | 'aborted';
+
 export interface Plan {
   id: number;
   kind: PlanKind;

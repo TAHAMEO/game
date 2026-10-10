@@ -1,7 +1,7 @@
 import { idleInput, type InputState } from '../src/core/input';
 import { cellAt, cellCenter, Tile } from '../src/core/level';
 import { angleDiff, angleTo, dist } from '../src/core/math';
-import { findPath } from '../src/core/path';
+import { distanceField, findPath } from '../src/core/path';
 import type { Sim } from '../src/core/sim';
 
 /**
@@ -18,7 +18,7 @@ export class Bot {
   private lastPos = { x: 0, y: 0 };
   private wander = -1;
 
-  constructor(private readonly sim: Sim, private readonly opts: { hides?: boolean; torch?: boolean; panicky?: boolean } = {}) {}
+  constructor(private readonly sim: Sim, private readonly opts: { hides?: boolean; torch?: boolean; panicky?: boolean; flees?: boolean } = {}) {}
 
   input(): InputState {
     const sim = this.sim;
@@ -39,11 +39,32 @@ export class Bot {
       inp.interact = true;
       return inp;
     }
-    // Under threat: hide in whatever is in front, otherwise run.
-    if (this.opts.hides !== false && (ent.stateKind === 'chase' || (ent.threatening && dEnt < 5)) && pl.focus?.kind === 'spot' && !pl.focus.spot.occupant && !pl.focus.spot.cluttered) {
+    // Under threat: hide in whatever is in front (if it can't see us), otherwise flee.
+    const threatened = ent.stateKind === 'chase' || ent.stateKind === 'lunge' || (ent.threatening && dEnt < 6);
+    const seen = sim.world.los(ent.pos, pl.pos) && dEnt < 9;
+    if (this.opts.hides !== false && threatened && (!seen || dEnt > 7) && pl.focus?.kind === 'spot' && !pl.focus.spot.occupant && !pl.focus.spot.cluttered && !pl.focus.spot.body) {
       inp.interactPressed = true;
       this.hideUntil = sim.time + 10 + sim.rng.range(0, 15);
       return inp;
+    }
+    if (this.opts.flees) {
+      // the tilt means it is listening: freeze, hold your breath
+      if (ent.tell?.kind === 'tilt' && dEnt < 12 && ent.stateKind === 'listen') {
+        inp.holdBreath = pl.breath.held < 6;
+        return inp;
+      }
+      const chased = ent.stateKind === 'chase' || ent.stateKind === 'lunge';
+      const searching = !chased && ent.threatening && dEnt < 11;
+      if (chased || searching) {
+        // the lesson every survivor learns: the torch is a beacon
+        if (pl.flashlight.on) inp.flashlightPressed = true;
+        const out = this.flee(inp, dEnt);
+        if (searching) {
+          out.sprint = false;
+          out.crouch = true;
+        }
+        return out;
+      }
     }
     if (this.opts.torch && sim.world.lighting.sample(pl.pos) < 0.1 && !pl.flashlight.on && sim.time % 7 < 0.02) inp.flashlightPressed = true;
 
@@ -84,6 +105,57 @@ export class Bot {
       inp.strafe = Math.sin(sim.time * 3);
       this.repathAt = 0;
     }
+    return inp;
+  }
+
+  private fleeGoal = -1;
+  private fleeUntil = 0;
+
+  /** Run for somewhere it can't reach before you can, then look for a place to hide. */
+  private flee(inp: InputState, dEnt: number): InputState {
+    const sim = this.sim;
+    const pl = sim.player;
+    if (sim.time > this.fleeUntil || this.fleeGoal < 0 || pl.cell === this.fleeGoal) {
+      const pass = (c: number) => sim.world.humanPassable(c) || this.isDoor(c);
+      const fromEnt = distanceField(sim.level, [sim.entity.cell], sim.world.entityPassable, 40);
+      const fromMe = distanceField(sim.level, [pl.cell], pass, 18);
+      let best = -1;
+      let bestScore = -Infinity;
+      for (let c = 0; c < fromMe.length; c++) {
+        const dm = fromMe[c]!;
+        if (!Number.isFinite(dm) || dm < 4) continue;
+        const de = fromEnt[c]!;
+        const margin = (Number.isFinite(de) ? de : 60) - dm;
+        const nearSpot = sim.world.spots.some((sp) => sp.access === c && !sp.occupant && !sp.cluttered && !sp.body) ? 4 : 0;
+        const score = margin + nearSpot + dm * 0.15;
+        if (score > bestScore) {
+          bestScore = score;
+          best = c;
+        }
+      }
+      this.fleeGoal = best;
+      this.fleeUntil = sim.time + 2;
+      this.repathAt = 0;
+    }
+    this.goal = this.fleeGoal;
+    if (sim.time > this.repathAt) {
+      this.repathAt = sim.time + 0.5;
+      this.path = findPath(sim.level, pl.cell, this.fleeGoal, { passable: (c) => sim.world.humanPassable(c) || this.isDoor(c) }) ?? [];
+    }
+    while (this.path.length && this.path[0] === pl.cell) this.path.shift();
+    const next = this.path[0];
+    if (next === undefined) {
+      // at the goal: face the nearest hiding place
+      const spot = sim.world.spots.find((sp) => sp.access === pl.cell && !sp.occupant && !sp.cluttered && !sp.body);
+      if (spot) inp.turn = Math.max(-0.3, Math.min(0.3, angleDiff(pl.angle, angleTo(pl.pos, cellCenter(sim.level, spot.cell)))));
+      return inp;
+    }
+    const f = pl.focus;
+    if (f && f.kind === 'door' && f.door.target < 0.5 && next === f.door.cell) inp.interactPressed = true;
+    const da = angleDiff(pl.angle, angleTo(pl.pos, cellCenter(sim.level, next)));
+    inp.turn = Math.max(-0.3, Math.min(0.3, da));
+    inp.forward = Math.abs(da) < 1 ? 1 : 0.2;
+    inp.sprint = dEnt < 10 && (this.sim.entity.stateKind === 'chase' || this.sim.entity.stateKind === 'lunge');
     return inp;
   }
 
