@@ -50,9 +50,9 @@ const BASE: FigurePose = {
   armsForward: 0,
 };
 
-const SKIN = '#b5afa3';
-const SKIN_DARK = '#6b665d';
-const VOID = '#0b0a09';
+const SKIN = '#8f897d';
+const SKIN_DARK = '#46423b';
+const VOID = '#070606';
 
 function limb(g: CanvasRenderingContext2D, x: number, y: number, dir: number, l1: number, l2: number, l: Limb, side: number, w1: number, w2: number): [number, number] {
   const a1 = Math.PI / 2 - side * l.a;
@@ -63,7 +63,7 @@ function limb(g: CanvasRenderingContext2D, x: number, y: number, dir: number, l1
   const hy = ey + Math.sin(a2) * l2;
   g.lineCap = 'round';
   g.strokeStyle = SKIN_DARK;
-  g.lineWidth = w1 + 1.2;
+  g.lineWidth = w1 + 1.4;
   g.beginPath();
   g.moveTo(x, y);
   g.lineTo(ex, ey);
@@ -80,135 +80,227 @@ function limb(g: CanvasRenderingContext2D, x: number, y: number, dir: number, l1
   g.moveTo(ex, ey);
   g.lineTo(hx, hy);
   g.stroke();
-  g.fillStyle = VOID;
+  // swollen joints
+  g.fillStyle = SKIN;
   g.beginPath();
-  g.arc(ex, ey, w1 * 0.35, 0, Math.PI * 2);
+  g.arc(ex, ey, w1 * 0.75, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = SKIN_DARK;
+  g.beginPath();
+  g.arc(ex + side, ey, w1 * 0.35, 0, Math.PI * 2);
   g.fill();
   return [hx, hy];
 }
 
 function hand(g: CanvasRenderingContext2D, x: number, y: number, size: number, spread: number): void {
-  g.strokeStyle = SKIN;
-  g.lineWidth = 1.1;
+  g.strokeStyle = SKIN_DARK;
+  g.lineWidth = 1.6;
   g.lineCap = 'round';
   for (let i = -2; i <= 2; i++) {
     const a = Math.PI / 2 + i * spread;
+    const len = size * (1 - Math.abs(i) * 0.12);
+    // fingers too long, slightly hooked
     g.beginPath();
     g.moveTo(x, y);
-    g.lineTo(x + Math.cos(a) * size, y + Math.sin(a) * size);
+    g.quadraticCurveTo(x + Math.cos(a) * len * 0.6, y + Math.sin(a) * len * 0.6, x + Math.cos(a + 0.25 * i) * len, y + Math.sin(a + 0.25 * i) * len);
+    g.stroke();
+  }
+  g.strokeStyle = SKIN;
+  g.lineWidth = 0.9;
+  for (let i = -2; i <= 2; i++) {
+    const a = Math.PI / 2 + i * spread;
+    const len = size * (1 - Math.abs(i) * 0.12);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.quadraticCurveTo(x + Math.cos(a) * len * 0.6, y + Math.sin(a) * len * 0.6, x + Math.cos(a + 0.25 * i) * len, y + Math.sin(a + 0.25 * i) * len);
     g.stroke();
   }
 }
+
+/** Dirt, shading and a dark outline so it never reads as clean plastic, even in the torch. */
+function grime(g: CanvasRenderingContext2D, w: number, h: number, seed: number): void {
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  const rng = new Rng(seed);
+  const blotch = new Float32Array(w * h).fill(1);
+  for (let i = 0; i < 26; i++) {
+    const bx = rng.int(0, w - 1);
+    const by = rng.int(0, h - 1);
+    const r = rng.range(2, 6);
+    const k = rng.range(0.55, 0.85);
+    for (let y = Math.max(0, by - 6); y < Math.min(h, by + 6); y++) {
+      for (let x = Math.max(0, bx - 6); x < Math.min(w, bx + 6); x++) {
+        if ((x - bx) ** 2 + (y - by) ** 2 < r * r) blotch[y * w + x] = Math.min(blotch[y * w + x]!, k);
+      }
+    }
+  }
+  const alpha = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : d[(y * w + x) * 4 + 3]!);
+  const out = new Uint8ClampedArray(d);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      if (d[o + 3]! < 40) continue;
+      const edge = alpha(x - 1, y) < 40 || alpha(x + 1, y) < 40 || alpha(x, y - 1) < 40 || alpha(x, y + 1) < 40;
+      const shadeV = 1.08 - 0.4 * (y / h);
+      const n = 0.78 + rng.next() * 0.3;
+      const k = (edge ? 0.35 : 1) * shadeV * n * blotch[y * w + x]!;
+      out[o] = d[o]! * k;
+      out[o + 1] = d[o + 1]! * k * 0.97;
+      out[o + 2] = d[o + 2]! * k * 0.92;
+      out[o + 3] = 255;
+    }
+  }
+  img.data.set(out);
+  g.putImageData(img, 0, 0);
+}
+
+let figureSeed = 1;
 
 /** The Entity: too tall, too thin, arms that hang past the knees. 64×128, feet at the bottom. */
 function figure(p: FigurePose): Tex {
   return canvasTex(64, 128, (g) => {
     const cx = 32 + p.lean * 6;
     const crouch = p.crouch;
-    const hipY = 66 + crouch * 38;
-    const shoulderY = 28 + crouch * 44 + p.armsForward * 2;
-    const legLen = 30 * (1 - crouch * 0.35);
+    const hipY = 68 + crouch * 36;
+    const shoulderY = 30 + crouch * 42 + p.armsForward * 2;
+    const legLen = 29 * (1 - crouch * 0.35);
     // legs
     for (const [l, side] of [
       [p.legL, -1],
       [p.legR, 1],
     ] as const) {
-      const hx = cx + side * 5;
+      const hx = cx + side * 4;
       const bend = crouch > 0.3 ? { a: l.a + 0.5, b: 2.2 } : l;
-      limb(g, hx, hipY, -1, legLen, legLen + 4, bend, side, 4.2, 3.2);
+      limb(g, hx, hipY, -1, legLen, legLen + 3, bend, side, 3.4, 2.5);
     }
-    // torso
-    const chestW = 9 + p.chest * 3;
+    // torso: broad bony shoulders, a waist like a wrist
+    const chestW = 8 + p.chest * 3;
     g.fillStyle = SKIN_DARK;
     g.beginPath();
-    g.moveTo(cx - chestW - 1, shoulderY - 1);
-    g.lineTo(cx + chestW + 1, shoulderY - 1);
-    g.lineTo(cx + 6, hipY + 2);
-    g.lineTo(cx - 6, hipY + 2);
+    g.moveTo(cx - chestW - 1.5, shoulderY - 1);
+    g.lineTo(cx + chestW + 1.5, shoulderY - 1);
+    g.lineTo(cx + 4.5, hipY - 8);
+    g.lineTo(cx + 5.5, hipY + 2);
+    g.lineTo(cx - 5.5, hipY + 2);
+    g.lineTo(cx - 4.5, hipY - 8);
     g.closePath();
     g.fill();
     g.fillStyle = SKIN;
     g.beginPath();
     g.moveTo(cx - chestW, shoulderY);
     g.lineTo(cx + chestW, shoulderY);
-    g.lineTo(cx + 5, hipY);
-    g.lineTo(cx - 5, hipY);
+    g.lineTo(cx + 3.5, hipY - 8);
+    g.lineTo(cx + 4.5, hipY);
+    g.lineTo(cx - 4.5, hipY);
+    g.lineTo(cx - 3.5, hipY - 8);
     g.closePath();
     g.fill();
     if (!p.back) {
       g.strokeStyle = SKIN_DARK;
       g.lineWidth = 1;
-      for (let i = 0; i < 5; i++) {
-        const y = shoulderY + 6 + i * 4;
+      for (let i = 0; i < 6; i++) {
+        const y = shoulderY + 5 + i * 3.2;
+        const inset = 1.5 + i * 0.9;
         g.beginPath();
-        g.moveTo(cx - chestW + 2 + i, y);
-        g.quadraticCurveTo(cx, y + 2, cx + chestW - 2 - i, y);
+        g.moveTo(cx - chestW + inset, y);
+        g.quadraticCurveTo(cx - 1, y + 2.4, cx - 0.5, y + 1);
+        g.moveTo(cx + chestW - inset, y);
+        g.quadraticCurveTo(cx + 1, y + 2.4, cx + 0.5, y + 1);
         g.stroke(); // ribs
       }
+      g.fillStyle = 'rgba(20,18,16,0.55)';
+      g.beginPath();
+      g.ellipse(cx, hipY - 9, 3, 5, 0, 0, Math.PI * 2);
+      g.fill(); // sunken belly
     } else {
       g.fillStyle = SKIN_DARK;
-      for (let y = shoulderY + 3; y < hipY - 2; y += 4) g.fillRect(cx - 1, y, 2, 2); // spine
-      g.fillRect(cx - chestW + 2, shoulderY + 4, 4, 8); // shoulder blades
-      g.fillRect(cx + chestW - 6, shoulderY + 4, 4, 8);
+      for (let y = shoulderY + 2; y < hipY - 1; y += 3) g.fillRect(cx - 1, y, 2, 2); // spine
+      g.fillRect(cx - chestW + 2, shoulderY + 3, 4, 9); // shoulder blades
+      g.fillRect(cx + chestW - 6, shoulderY + 3, 4, 9);
     }
     // arms
-    const armLen = 30 * (1 - crouch * 0.2);
+    const armLen = 33 * (1 - crouch * 0.2);
     for (const [l, side] of [
       [p.armL, -1],
       [p.armR, 1],
     ] as const) {
-      const sx = cx + side * (chestW + 1);
+      const sx = cx + side * (chestW + 0.5);
       if (p.armsForward > 0) {
         // foreshortened reach toward the viewer
-        const tx = cx + side * (12 + p.armsForward * 6);
-        const ty = shoulderY - 4 - p.armsForward * 8;
-        g.strokeStyle = SKIN;
-        g.lineWidth = 3.4 + p.armsForward;
+        const tx = cx + side * (12 + p.armsForward * 7);
+        const ty = shoulderY - 4 - p.armsForward * 9;
         g.lineCap = 'round';
+        g.strokeStyle = SKIN_DARK;
+        g.lineWidth = 4.4 + p.armsForward;
         g.beginPath();
         g.moveTo(sx, shoulderY + 2);
         g.lineTo(tx, ty);
         g.stroke();
-        hand(g, tx, ty, 8 + p.armsForward * 4, 0.5);
+        g.strokeStyle = SKIN;
+        g.lineWidth = 3 + p.armsForward;
+        g.beginPath();
+        g.moveTo(sx, shoulderY + 2);
+        g.lineTo(tx, ty);
+        g.stroke();
+        hand(g, tx, ty, 10 + p.armsForward * 5, 0.5);
       } else {
-        const [hx, hy] = limb(g, sx, shoulderY + 2, 1, armLen, armLen + 4, l, side, 3.4, 2.6);
-        hand(g, hx, hy, 6, 0.28);
+        const [hx, hy] = limb(g, sx, shoulderY + 2, 1, armLen, armLen + 5, l, side, 2.8, 2.2);
+        hand(g, hx, hy, 8, 0.24);
       }
     }
-    // neck + head
-    const neckTop = shoulderY - 10 + p.headBack * 3;
-    g.strokeStyle = SKIN;
-    g.lineWidth = 3;
+    // a neck too long, a head too small
+    const neckTop = shoulderY - 13 + p.headBack * 3;
+    const hxp = cx + Math.sin(p.headTilt) * 7;
+    g.lineCap = 'round';
+    g.strokeStyle = SKIN_DARK;
+    g.lineWidth = 3.6;
     g.beginPath();
-    g.moveTo(cx, shoulderY);
-    g.lineTo(cx + Math.sin(p.headTilt) * 6, neckTop);
+    g.moveTo(cx, shoulderY + 1);
+    g.lineTo(hxp, neckTop);
+    g.stroke();
+    g.strokeStyle = SKIN;
+    g.lineWidth = 2.2;
+    g.beginPath();
+    g.moveTo(cx, shoulderY + 1);
+    g.lineTo(hxp, neckTop);
     g.stroke();
     g.save();
-    g.translate(cx + Math.sin(p.headTilt) * 6, neckTop - 6);
+    g.translate(hxp, neckTop - 6);
     g.rotate(p.headTilt);
     g.fillStyle = SKIN_DARK;
     g.beginPath();
-    g.ellipse(0, 0, 6, 9 - p.headBack * 2, 0, 0, Math.PI * 2);
+    g.ellipse(0, 0, 5.2, 8.4 - p.headBack * 2, 0, 0, Math.PI * 2);
     g.fill();
     g.fillStyle = SKIN;
     g.beginPath();
-    g.ellipse(0, -0.5, 5.2, 8.2 - p.headBack * 2, 0, 0, Math.PI * 2);
+    g.ellipse(0, -0.6, 4.4, 7.6 - p.headBack * 2, 0, 0, Math.PI * 2);
     g.fill();
     if (!p.back) {
       g.fillStyle = VOID;
-      const ey = -2 + p.headBack * 2;
+      const ey = -2.2 + p.headBack * 2;
+      // sockets, not eyes
       g.beginPath();
-      g.ellipse(-2.4, ey, 1.6, 2.4, 0, 0, Math.PI * 2);
-      g.ellipse(2.4, ey, 1.6, 2.4, 0, 0, Math.PI * 2);
+      g.moveTo(-3.6, ey - 1.6);
+      g.lineTo(-0.6, ey - 0.8);
+      g.lineTo(-1.2, ey + 2.4);
+      g.lineTo(-3.4, ey + 1.8);
+      g.closePath();
+      g.moveTo(3.6, ey - 1.6);
+      g.lineTo(0.6, ey - 0.8);
+      g.lineTo(1.2, ey + 2.4);
+      g.lineTo(3.4, ey + 1.8);
+      g.closePath();
       g.fill();
+      // a jaw that hangs
       g.beginPath();
-      g.ellipse(0, 4 - p.headBack, 1.4 + p.mouth * 1.6, 0.8 + p.mouth * 3, 0, 0, Math.PI * 2);
+      g.ellipse(0, 4.2 - p.headBack + p.mouth * 1.5, 1 + p.mouth * 1.4, 1.2 + p.mouth * 3.4, 0, 0, Math.PI * 2);
       g.fill();
     } else {
       g.fillStyle = SKIN_DARK;
-      g.fillRect(-1, -6, 2, 12);
+      g.fillRect(-0.8, -6, 1.6, 12);
     }
     g.restore();
+    grime(g, 64, 128, figureSeed++);
   });
 }
 

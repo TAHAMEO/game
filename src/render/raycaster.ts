@@ -23,6 +23,8 @@ interface SpriteDraw {
 }
 
 const AMBIENT = 0.018;
+/** Its pale skin catches whatever stray light there is — real or imagined, identically [S]. */
+const PALE = 0.07;
 const TORCH = [1.0, 0.92, 0.78] as const;
 
 /**
@@ -54,6 +56,7 @@ export class Renderer {
   private readonly spillLut = new Float32Array(256);
   private readonly handprint: Uint8Array;
   private grain = 0;
+  private breathHaze = 0;
 
   constructor(canvas: HTMLCanvasElement, W = 400, H = 225) {
     this.W = W;
@@ -217,7 +220,7 @@ export class Renderer {
       const stepY = (rowDist * (rdry - rdly)) / W;
       let fx = px + rowDist * rdlx;
       let fy = py + rowDist * rdly;
-      const fall = torch > 0 ? (torch * 1.45) / (1 + 0.22 * rowDist * rowDist) : 0;
+      const fall = torch > 0 ? (torch * 1.8) / (1 + 0.2 * rowDist * rowDist) : 0;
       const spillFall = torch > 0 ? torch / (1 + 0.3 * rowDist * rowDist) : 0;
       const texs = floorRow ? this.floorTex : this.ceilTex;
       const cellTex = floorRow ? this.cellFloor : this.cellCeil;
@@ -393,7 +396,7 @@ export class Renderer {
       const ny = side === 1 ? -stepY : 0;
       const L = this.sampleLight(hx + nx * 0.5, hy + ny * 0.5);
       const shadeSide = side === 1 ? 0.82 : 1;
-      const fall = torch > 0 ? (torch * 1.45) / (1 + 0.22 * perp * perp) : 0;
+      const fall = torch > 0 ? (torch * 1.8) / (1 + 0.2 * perp * perp) : 0;
       const spillFall = torch > 0 ? torch / (1 + 0.3 * perp * perp) : 0;
       const heat = thermalHeat.get(hitCell) ?? 0;
       const cold = heat > 0 && world.isCold(frontCell);
@@ -444,7 +447,7 @@ export class Renderer {
       const y1 = Math.min(H - 1, Math.floor(floorY));
       if (x0 > x1 || y0 > y1) continue;
       const L = this.sampleLight(s.x, s.y);
-      const fall = torch > 0 ? (torch * 1.45) / (1 + 0.22 * depth * depth) : 0;
+      const fall = torch > 0 ? (torch * 1.8) / (1 + 0.2 * depth * depth) : 0;
       const spillFall = torch > 0 ? torch / (1 + 0.3 * depth * depth) : 0;
       const tw = s.tex.w;
       const th = s.tex.h;
@@ -572,10 +575,10 @@ export class Renderer {
       if (pr.kind === 'survivorBody') {
         const fr = this.framesForColor(pr.color ?? [120, 120, 120]);
         add(pr.pos.x, pr.pos.y, fr.body, 0.18);
-      } else if (pr.kind === 'remains') add(pr.pos.x, pr.pos.y, this.items.remains!, 0.42);
-      else if (pr.kind === 'sign') add(pr.pos.x, pr.pos.y, this.items.sign!, 0.5);
-      else if (pr.kind === 'debris') add(pr.pos.x, pr.pos.y, this.items.debris!, 0.16);
-      else add(pr.pos.x, pr.pos.y, this.items.trophy!, 0.24);
+      } else if (pr.kind === 'remains') add(pr.pos.x, pr.pos.y, this.items.remains!, 0.5);
+      else if (pr.kind === 'sign') add(pr.pos.x, pr.pos.y, this.items.sign!, 0.6);
+      else if (pr.kind === 'debris') add(pr.pos.x, pr.pos.y, this.items.debris!, 0.2);
+      else add(pr.pos.x, pr.pos.y, this.items.trophy!, 0.32);
     }
     for (const sv of sim.survivors.list) {
       if (!sv.alive || sv.spot) continue;
@@ -591,19 +594,25 @@ export class Renderer {
       const fr = this.survivorFrames.get(sv.id) ?? this.framesFor(sv);
       add(e.pos.x, e.pos.y, e.pose === 'wave' ? fr.wave : fr.idle, 0.8);
     } else if (dCam > 0.15) {
-      add(e.pos.x, e.pos.y, this.entityFrame(e.pose, e.angle, angleTo(e.pos, camPos), t), 1.02);
+      add(e.pos.x, e.pos.y, this.entityFrame(e.pose, e.angle, angleTo(e.pos, camPos), t), 1.02, 0, false, PALE);
     }
-    // perceptual noise: drawn with exactly the same art [S]
+    // perceptual noise: drawn with exactly the same art and the same pale glow [S]
     for (const ph of sim.director.perception.phantoms) {
       const pose: Pose = ph.pose === 'walk' ? 'walk' : ph.pose === 'tilt' ? 'tilt' : 'idle';
-      add(ph.pos.x, ph.pos.y, this.entityFrame(pose, ph.angle, angleTo(ph.pos, camPos), t), 1.02);
+      add(ph.pos.x, ph.pos.y, this.entityFrame(pose, ph.angle, angleTo(ph.pos, camPos), t), 1.02, 0, false, PALE);
     }
-    // breath fog [V]
+    // breath fog [V]: your own breath is a wisp at the bottom of the view; breath leaking
+    // from a hiding place (or seen from elsewhere) is a small cloud in the world.
+    this.breathHaze = 0;
     for (const f of world.fog) {
       const age = sim.time - f.t;
       const k = Math.max(0, 1 - age / 2.6);
+      if (dist(f.pos, camPos) < 1.1) {
+        this.breathHaze = Math.max(this.breathHaze, k * Math.min(1, f.size));
+        continue;
+      }
       const rise = age * 0.06;
-      add(f.pos.x, f.pos.y, this.items.fog!, 0.18 * f.size * (0.6 + age * 0.4), 0.38 + rise, true, 0.05 * k);
+      add(f.pos.x, f.pos.y, this.items.fog!, 0.12 * f.size * (0.6 + age * 0.4), 0.38 + rise, true, 0.04 * k);
     }
     return out;
   }
@@ -717,6 +726,24 @@ export class Renderer {
         }
         c = 0xff000000 | (clampByte(b) << 16) | (clampByte(g) << 8) | clampByte(r);
         buf[o] = c;
+      }
+    }
+    if (this.breathHaze > 0.02) {
+      // a soft, low cloud of your own breath
+      const hx = W / 2;
+      const hy = H * 0.86;
+      const rx = W * 0.3;
+      const ry = H * 0.24;
+      const a0 = this.breathHaze * 0.28;
+      for (let y = Math.floor(hy - ry); y < H; y++) {
+        for (let x = Math.floor(hx - rx); x < Math.ceil(hx + rx); x++) {
+          const dx = (x - hx) / rx;
+          const dy = (y - hy) / ry;
+          const r2 = dx * dx + dy * dy;
+          if (r2 >= 1) continue;
+          const o = y * W + x;
+          buf[o] = blend(buf[o]!, 0xffd8d4cf, a0 * (1 - r2) * (1 - r2));
+        }
       }
     }
     if (!pl.alive) {

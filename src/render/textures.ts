@@ -159,7 +159,7 @@ const wallpaper: Draw = (g, rng, w, h) => {
 };
 
 const nestWall: Draw = (g, rng, w, h) => {
-  g.fillStyle = rgb(34, 28, 26);
+  g.fillStyle = rgb(62, 52, 46);
   g.fillRect(0, 0, w, h);
   for (let i = 0; i < 24; i++) {
     g.strokeStyle = rgba(70, 50, 44, rng.range(0.3, 0.7));
@@ -514,7 +514,7 @@ const boards: Draw = (g, rng, w, h) => {
 };
 
 const nestFloor: Draw = (g, rng, w, h) => {
-  g.fillStyle = rgb(30, 24, 22);
+  g.fillStyle = rgb(52, 42, 38);
   g.fillRect(0, 0, w, h);
   for (let i = 0; i < 40; i++) {
     g.fillStyle = rgba(rng.range(120, 180), rng.range(110, 160), rng.range(90, 130), rng.range(0.3, 0.7));

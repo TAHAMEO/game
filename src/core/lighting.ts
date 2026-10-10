@@ -24,6 +24,7 @@ const FLUORESCENT: [number, number, number] = [0.9, 1.0, 0.94];
 const EMERGENCY: [number, number, number] = [1.0, 0.16, 0.1];
 const SODIUM: [number, number, number] = [1.0, 0.62, 0.28];
 const MOON: [number, number, number] = [0.16, 0.2, 0.3];
+const NEST_GLOW: [number, number, number] = [0.42, 0.62, 0.5];
 
 /**
  * Per-cell light. Fixtures are generated from the map's regions, so the lighting is
@@ -54,7 +55,12 @@ export class Lighting {
     const { level } = this;
     for (const region of level.regions) {
       const zone = level.zones[region.zone]!;
-      if (region.kind === 'nest' || zone.key === 'o') continue; // the old wing has been dark for years
+      if (zone.key === 'o') continue; // the old wing has been dark for years
+      if (region.kind === 'nest') {
+        // Something wet on the walls holds a little light. Enough to read the hoard by [W].
+        this.add(region.center, region.id, 'emergency', NEST_GLOW, 0.95, 7, 0.15);
+        continue;
+      }
       const floor = region.cells.filter((c) => level.tiles[c] === Tile.Floor);
       if (floor.length === 0) continue;
       if (region.kind === 'exterior') {

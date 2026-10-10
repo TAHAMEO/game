@@ -39,6 +39,14 @@ export class Hud {
     this.note = root.querySelector('.hud-note')!;
   }
 
+  /** Only touch the DOM when the content actually changes (keeps paint/composite cheap). */
+  private readonly last = new WeakMap<HTMLElement, string>();
+  private set(el: HTMLElement, html: string): void {
+    if (this.last.get(el) === html) return;
+    this.last.set(el, html);
+    el.innerHTML = html;
+  }
+
   reset(): void {
     this.subs.innerHTML = '';
     this.notices.innerHTML = '';
@@ -80,7 +88,7 @@ export class Hud {
       for (let i = list.length - 1; i >= 0; i--) {
         const l = list[i]!;
         const left = l.until - this.clock;
-        l.el.style.opacity = String(Math.max(0, Math.min(1, left / 0.8)));
+        if (left < 0.8) l.el.style.opacity = String(Math.max(0, left / 0.8).toFixed(2));
         if (left <= 0) {
           l.el.remove();
           list.splice(i, 1);
@@ -89,10 +97,12 @@ export class Hud {
     }
     const pl = sim.player;
     const prompt = pl.alive && !pl.channel ? (pl.hidden ? (pl.transition ? null : 'Leave') : pl.promptFor(pl.focus)) : null;
-    this.prompt.innerHTML = prompt ? `<kbd>E</kbd> ${esc(prompt)}` : '';
+    this.set(this.prompt, prompt ? `<kbd>E</kbd> ${esc(prompt)}` : '');
     const prog = pl.channelProgress;
-    this.bar.parentElement!.style.opacity = prog > 0 ? '1' : '0';
-    this.bar.style.width = `${(prog * 100).toFixed(1)}%`;
+    const barOpacity = prog > 0 ? '1' : '0';
+    if (this.bar.parentElement!.style.opacity !== barOpacity) this.bar.parentElement!.style.opacity = barOpacity;
+    const width = `${Math.round(prog * 100)}%`;
+    if (this.bar.style.width !== width) this.bar.style.width = width;
 
     const inv = pl.inv;
     const bits: string[] = [];
@@ -103,7 +113,7 @@ export class Hud {
     const status: string[] = [];
     if (pl.isMarked) status.push('Your sleeve is soaked black.');
     if (pl.wounded) status.push('You are bleeding.');
-    this.inv.innerHTML = `<div>${esc(bits.join(' · ') || 'empty pockets')}</div>${status.map((s) => `<div class="status">${esc(s)}</div>`).join('')}`;
+    this.set(this.inv, `<div>${esc(bits.join(' · ') || 'empty pockets')}</div>${status.map((s) => `<div class="status">${esc(s)}</div>`).join('')}`);
 
     if (pl.readingNote !== null) {
       const n = sim.world.notes[pl.readingNote]!;
