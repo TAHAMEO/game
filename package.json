@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "soak": "vitest run tests/soak.test.ts",
-    "campaign": "CAMPAIGN=1 vitest run --silent=false --reporter=verbose"
+    "campaign": "CAMPAIGN=1 vitest run --silent=false --reporter=verbose",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
