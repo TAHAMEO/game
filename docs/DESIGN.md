@@ -233,8 +233,10 @@ Director's leash and relax curves (`director/director.ts`), and the tier thresho
 
 The brief's systems were first shown through a low-resolution raycaster with simple sound. This part
 puts them in HD 3D with full 3D sound, adds a story and Director-staged jump scares, and lets up to
-four people play the same run. None of it changes how the Entity senses or decides: a solo run with
-the same seed plays out exactly as before (tests assert it).
+four people play the same run. With the story and scares switched off, a solo run with a given seed
+plays out exactly as it did before this part (the system tests for S–Z run that way, unchanged). The
+story never touches the Entity's senses or the Director; scares reach them only through your stress,
+like any false signal, and through the one real noise of a falling ceiling tile.
 
 ## Shared runs in the simulation
 
